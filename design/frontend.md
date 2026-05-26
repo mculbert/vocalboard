@@ -1,0 +1,242 @@
+# Frontend
+
+## Technology
+
+| Layer | Choice |
+|---|---|
+| Framework | Svelte 5 (runes) + SvelteKit (static adapter) |
+| Component library | Bits UI (headless, accessible primitives) |
+| Styling | Tailwind CSS v4 |
+| i18n | Paraglide-js (compile-time typed messages) |
+| Icons | (TBD — Lucide or similar SVG icon set) |
+| Testing | Vitest (unit), Playwright (E2E, not in CI) |
+
+SvelteKit is configured with the `@sveltejs/adapter-static` adapter. The build output is a static site that Tauri bundles. No server-side rendering; all data comes via Tauri commands and events.
+
+## Source layout
+
+```
+src/
+├── app.html                   Tauri webview entry point
+├── app.css                    Tailwind base + global tokens
+│
+├── routes/
+│   ├── +layout.svelte         Root layout: sets up Tauri event listeners, i18n, global stores
+│   ├── +page.svelte           Welcome screen (new/open/recent)
+│   └── project/
+│       └── +page.svelte       Main editor view (timeline + toolbar + menus + progress bar)
+│
+├── lib/
+│   ├── ipc/
+│   │   ├── commands.ts        Typed wrappers for every Tauri command (generated from command-surface JSON schemas)
+│   │   ├── events.ts          Typed Tauri event listeners (playhead_update, task_progress, etc.)
+│   │   └── types.ts           Shared TypeScript types for command params/results
+│   │
+│   ├── state/
+│   │   ├── project.svelte.ts  Project-level rune state ($state, $derived)
+│   │   ├── cursor.svelte.ts   Cursor locus + selection range state
+│   │   ├── playback.svelte.ts Playback position state
+│   │   └── tasks.svelte.ts    Background task queue state (mirrors the in-memory queue)
+│   │
+│   ├── components/
+│   │   ├── timeline/
+│   │   │   ├── Timeline.svelte         Virtualized scroll container for bubbles
+│   │   │   ├── BubbleColumn.svelte     Single column of non-overlapping bubbles
+│   │   │   ├── Bubble.svelte           One speech turn or sound event
+│   │   │   ├── Word.svelte             One word span (tabindex="-1", cut/muted styling)
+│   │   │   └── TrackRibbon.svelte      Left-edge ribbon per track (Phase 2 adds editing handles)
+│   │   ├── toolbar/
+│   │   │   └── Toolbar.svelte
+│   │   ├── progress/
+│   │   │   └── ProgressBar.svelte      Task queue progress + step label + spinner
+│   │   ├── dialogs/
+│   │   │   ├── ModelDownload.svelte
+│   │   │   ├── MissingFiles.svelte
+│   │   │   ├── AlignTracks.svelte
+│   │   │   ├── EnhanceAudio.svelte
+│   │   │   ├── TrackInfo.svelte
+│   │   │   ├── RenameTrack.svelte
+│   │   │   └── Settings.svelte
+│   │   └── welcome/
+│   │       └── Welcome.svelte
+│   │
+│   └── i18n/
+│       └── messages/
+│           └── en.json        English message catalog (source of truth for Paraglide)
+```
+
+## State management
+
+Svelte 5 runes are used for all reactive state. The root `+layout.svelte` instantiates the global store singletons and injects them via Svelte context.
+
+### Key rune stores
+
+**`project.svelte.ts`**
+```ts
+// Derived from Tauri events; updated when commands complete
+export const project = $state({
+  id: null as string | null,
+  name: '',
+  sampleRate: 48000,
+  tracks: [] as Track[],
+  speakers: [] as Speaker[],
+  labels: [] as Label[],
+  totalLengthSamples: 0,
+})
+```
+
+**`cursor.svelte.ts`**
+```ts
+export const cursor = $state({
+  locus: null as Locus | null,   // { type: 'word', trackId, turnId, wordIndex }
+                                 // | { type: 'track_start', trackId }
+  selectionEnd: null as Locus | null,
+})
+```
+
+**`playback.svelte.ts`**
+```ts
+export const playback = $state({
+  isPlaying: false,
+  positionSamples: 0,
+  currentWordKey: null as string | null,  // set by playhead_update events
+})
+```
+
+**`tasks.svelte.ts`**
+```ts
+export const tasks = $state({
+  queue: [] as Task[],    // mirrors Rust's in-memory queue via events (not persisted in Phase 1)
+})
+```
+
+### Backend → UI events
+
+Tauri events emitted by Rust that the UI subscribes to:
+
+| Event | Payload | Subscriber |
+|---|---|---|
+| `playhead_update` | `{ position_samples }` | `playback.svelte.ts` |
+| `playback_stopped` | `{ position_samples }` | `playback.svelte.ts`, `cursor.svelte.ts` |
+| `task_progress` | `{ task_id, step_name, step_index, step_count, pct }` | `tasks.svelte.ts` |
+| `task_completed` | `{ task_id, result_summary }` | `tasks.svelte.ts`, `project.svelte.ts` |
+| `task_error` | `{ task_id, code, message }` | `tasks.svelte.ts` |
+| `project_state_updated` | `{ change_type, ... }` | `project.svelte.ts` |
+| `missing_files` | `{ tracks: [{id, name, last_known_path}] }` | triggers `MissingFiles` dialog |
+
+## Bubble virtualization
+
+Long transcripts (1–4 hour podcasts may produce thousands of turns) require virtualized rendering.
+
+### Windowing strategy
+
+`Timeline.svelte` uses a virtual scrolling approach at the **bubble (turn)** level:
+
+1. The scroll container has a fixed height with `overflow-y: scroll`.
+2. Bubbles outside the visible viewport + an overscan region (2 viewport heights above and below) are replaced with **placeholder `<div>` elements** whose height equals the bubble's computed visual height (proportional to turn duration).
+3. Bubbles inside the overscan region are fully rendered (all words, all `<span>` elements).
+4. On scroll, a `requestAnimationFrame` callback recomputes which bubbles are in range and updates the rendered set.
+
+### Placeholder height calculation
+
+Visual height of a bubble = `f(turn_duration_samples)`. The exact function is determined by the timeline's pixels-per-second density (a user-adjustable zoom level in Phase 2; fixed in Phase 1). Placeholder height must match so the scrollbar position is accurate.
+
+### Focus restoration
+
+If the user navigates (keyboard or click) to a word in a currently-unrendered bubble, the Timeline first scrolls the placeholder into view, waits one frame for the bubble to render, then calls `focus()` on the target word's `<span>`. A `$effect` in `cursor.svelte.ts` triggers this behavior whenever the locus changes.
+
+### Overlapping turns
+
+Overlapping turns (from different tracks) are rendered in adjacent **columns** within the same vertical slot. `BubbleColumn.svelte` stacks bubbles vertically; the Timeline computes column assignments by sweeping the turn list and detecting overlaps. A turn may span multiple columns if it overlaps more than one other turn.
+
+## Cursor and selection model
+
+### Locus types
+
+Two locus types exist:
+- `{ type: 'word', trackId, turnId, wordIndex }` — focus is on a specific word (`turnId` is the persistent turn ID)
+- `{ type: 'track_start', trackId }` — focus is at the track-start marker (before the first word)
+
+Track-start loci are navigable but never included in selection ranges. They are ordered by the track's `project_start_sample`; tracks with the same start time are ordered by import order.
+
+### Selection
+
+A selection is defined by two loci: the cursor and `selectionEnd`. The selection covers every word between the two loci **in navigation order** — the same start-time-sequentialized word order the cursor traverses (overlapping turns are taken one entire turn at a time, ordered by start time, ties broken by track import order; see [§ Overlapping turn navigation](#overlapping-turn-navigation)). Expanding the selection by keyboard or by mouse drag walks that same order, so growing a selection is always a contiguous run of the navigation sequence.
+
+Anchoring selection to navigation order (rather than raw project-timeline order) is deliberate: it keeps keyboard/drag extension consistent with cursor movement, and it avoids a degenerate case under timeline-order selection where, if every turn overlaps another, no sub-range smaller than the whole transcript could be selected.
+
+> **Time-range edge case (flagged for implementation).** Because selection follows navigation order, a selection that crosses overlapping turns is *not* guaranteed to be a clean timeline interval: the selected endpoint inside a later overlapping turn can sit at an **earlier** project-timeline sample than the end of the earlier overlapping turn. Mapping such a selection onto the `[start_sample, end_sample]` params that `cut_words` / `mute_words` expect (see [command-surface.md](command-surface.md#cut_words-v1)) therefore needs care; the exact resolution is left to implementation.
+
+### Navigation
+
+All keyboard navigation commands (defined in [requirements.md § Shortcut/Hotkey List](../requirements.md)) update the cursor locus by invoking the corresponding navigation logic in `cursor.svelte.ts`. Navigation traverses cut and muted words (per requirements); the screen reader announces "cut" or "muted" status via `aria-label`.
+
+### Overlapping turn navigation
+
+When advancing past the end of an overlapping turn into the beginning of a later overlapping turn, the cursor position in the project timeline moves backward. This is expected and documented behavior; screen reader announcements remain word-order-based, not timeline-based.
+
+## Accessibility
+
+Per the requirements spec, all UI is fully keyboard-navigable and screen-reader compatible.
+
+### Word spans
+
+Each word is a `<span>` with `tabindex="-1"` (focusable programmatically, not in the tab order). The tab order navigates between bubbles (sections); within a bubble, arrow keys navigate words.
+
+```svelte
+<span
+  role="option"
+  tabindex="-1"
+  aria-selected={isAtCursor}
+  aria-current={isAtCursor ? 'location' : undefined}
+  aria-label={ariaLabel}   <!-- includes "cut" or "muted" prefix when applicable -->
+  data-track-id={trackId}
+  data-turn-id={turnId}
+  data-word-index={wordIndex}
+  class={wordClasses}
+  on:click={handleWordClick}
+>
+  {word.text_label}
+</span>
+```
+
+### Bubbles
+
+Each bubble is a `<section>` with `aria-labelledby` pointing to a hidden `<span>` that contains the speaker name and turn start time.
+
+```svelte
+<section aria-labelledby="bubble-label-{turn.id}">
+  <span id="bubble-label-{turn.id}" class="sr-only">
+    {m.bubble_label({ speaker: speakerName, time: formattedTime })}
+  </span>
+  <!-- words -->
+</section>
+```
+
+### Live regions
+
+`aria-live="polite"` region at the bottom of the page, visually hidden, used exclusively for:
+- Ctrl-L ("announce location"): announces `"Speaker Name, word text, timestamp"`
+- Playback stopped: announces the word at the new cursor location
+
+Playback word highlights do **not** announce via `aria-live` (per requirements: screen reader should not announce words during playback).
+
+### Focus management
+
+When dialogs open, focus moves to the dialog's first interactive element. When dialogs close, focus returns to the previously-focused word or the timeline's default focus target.
+
+## i18n
+
+Paraglide-js compiles `src/lib/i18n/messages/en.json` into typed TypeScript functions at build time. All user-visible strings go through Paraglide.
+
+### Conventions
+
+- Key format: `snake_case` — e.g., `bubble_label`, `cut_word_undo`, `missing_file_dialog_title`
+- Pluralization uses ICU MessageFormat: `{ count, plural, =0 {...} one {...} other {...} }`
+- Backend errors travel as message keys: Rust returns `{ "error_key": "track_name_empty", "params": {} }` and the frontend calls `m[error_key](params)` to render. Keys that don't exist in the catalog fall back to the raw key string (safe default).
+
+### Adding a new string
+
+1. Add the key to `en.json`
+2. Run `pnpm paraglide:compile` (runs automatically in `dev` mode)
+3. Use the typed function: `import * as m from '$lib/i18n/messages'; m.my_new_key()`
