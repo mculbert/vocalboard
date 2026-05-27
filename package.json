@@ -8,7 +8,7 @@
     "dev": "vite dev",
     "build": "pnpm paraglide:compile && vite build",
     "preview": "vite preview",
-    "check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "check": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "check:watch": "pnpm paraglide:compile && svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
     "lint": "eslint .",
     "test": "vitest run --config vitest.config.ts",
