@@ -8,7 +8,6 @@ import structlog
 
 from vocalboard_sidecar.dispatch import (
     handle_message,
-    make_log_msg,
     parse_message,
 )
 from vocalboard_sidecar.registry import REGISTRY
@@ -24,7 +23,7 @@ def _emit(msg: dict) -> None:  # type: ignore[type-arg]
 
 def main() -> None:
     _log.info("sidecar_starting")
-    _emit(make_log_msg("sidecar ready"))
+    _emit({"type": "ready"})
     cancel_flags: dict[str, bool] = {}
     for raw_line in sys.stdin:
         try:

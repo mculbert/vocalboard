@@ -30,7 +30,7 @@ pub struct SidecarManager {
 }
 
 impl SidecarManager {
-    /// Spawn the Python sidecar and wait up to 30 seconds for the "sidecar ready" handshake.
+    /// Spawn the Python sidecar and wait up to 30 seconds for the typed `Ready` signal.
     ///
     /// In dev, pass `python_bin = "python"` and `python_args = &["-m", "vocalboard_sidecar"]`.
     pub async fn start(python_bin: &str, python_args: &[&str]) -> Result<Arc<Self>> {
@@ -64,7 +64,7 @@ impl SidecarManager {
             }
         });
 
-        // Channel that fires once "sidecar ready" is seen on stdout.
+        // Channel that fires once the typed Ready signal is seen on stdout.
         let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
         let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
 
@@ -170,15 +170,15 @@ impl SidecarManager {
         };
 
         match msg {
+            FromSidecar::Ready => {
+                *status.write().await = SidecarStatus::Ready;
+                let mut guard = ready_tx.lock().await;
+                if let Some(tx) = guard.take() {
+                    let _ = tx.send(Ok(()));
+                }
+            }
             FromSidecar::Log(log) => {
                 info!(target: "sidecar::log", level = ?log.level, "{}", log.msg);
-                if log.msg == "sidecar ready" {
-                    *status.write().await = SidecarStatus::Ready;
-                    let mut guard = ready_tx.lock().await;
-                    if let Some(tx) = guard.take() {
-                        let _ = tx.send(Ok(()));
-                    }
-                }
             }
             FromSidecar::Progress(p) => {
                 debug!(
@@ -218,6 +218,28 @@ mod tests {
 
     fn python_bin() -> String {
         std::env::var("VOCALBOARD_PYTHON").unwrap_or_else(|_| "python".to_owned())
+    }
+
+    /// `route_line` must fire the ready oneshot and set status to Ready when it
+    /// receives `{"type":"ready"}`.
+    #[tokio::test]
+    async fn route_line_fires_ready_on_ready_signal() -> anyhow::Result<()> {
+        use std::collections::HashMap;
+
+        let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
+        let status = Arc::new(RwLock::new(proto::SidecarStatus::NotStarted));
+        let (ready_tx, mut ready_rx) = oneshot::channel::<anyhow::Result<()>>();
+        let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
+
+        SidecarManager::route_line(r#"{"type":"ready"}"#, &pending, &status, &ready_tx).await;
+
+        let result = ready_rx.try_recv()?;
+        assert!(result.is_ok(), "ready oneshot should carry Ok(())");
+        assert!(
+            matches!(*status.read().await, proto::SidecarStatus::Ready),
+            "status should be Ready after the typed ready signal"
+        );
+        Ok(())
     }
 
     /// `route_line` must resolve a pending request as `Err` when the sidecar emits

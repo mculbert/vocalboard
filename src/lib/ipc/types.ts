@@ -7,8 +7,7 @@ type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogMsg = { 
 /**
- * UUIDv4 of the originating request, or `null` for process-level messages
- * (e.g. the startup `"sidecar ready"` log).
+ * UUIDv4 of the originating request, or `null` for process-level messages.
  */
 request_id: string | null, 
 /**
@@ -70,7 +69,7 @@ code: ErrorCode,
  */
 message: string, };
 
-type FromSidecar = { "type": "progress" } & ProgressMsg | { "type": "log" } & LogMsg | { "type": "result" } & ResultMsg | { "type": "error" } & ErrorMsg;
+type FromSidecar = { "type": "ready" } | { "type": "progress" } & ProgressMsg | { "type": "log" } & LogMsg | { "type": "result" } & ResultMsg | { "type": "error" } & ErrorMsg;
 
 type CancelEnvelope = { 
 /**
