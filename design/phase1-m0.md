@@ -174,10 +174,11 @@ placeholders) and real content can be added incrementally through M7.
 - Seed one trivial test per language so runners aren't empty.
 - **Sidecar integration test in `rust-tests`:** `cargo test --workspace` includes
   `core::task::tests::sidecar_start_and_ping`, which requires a working Python
-  interpreter with `vocalboard-sidecar` installed. The `rust-tests` job must either
-  install the sidecar (`uv pip install -e python/`) and set `VOCALBOARD_PYTHON` to
-  that interpreter, or set `SKIP_SIDECAR_TESTS=1` to skip it (acceptable only if
-  the `python-tests` job already covers the sidecar logic via `pytest`).
+  interpreter with `vocalboard-sidecar` installed. The Linux leg of `rust-tests`
+  installs `uv`, runs `uv sync` in `python/`, and sets `VOCALBOARD_PYTHON` to the
+  resulting interpreter so the integration test runs for real. Windows and macOS legs
+  set `SKIP_SIDECAR_TESTS=1` to avoid cross-OS venv pathing complexity; the
+  `python-tests` job covers the sidecar contract on all three platforms via `pytest`.
 - **Verify:** CI green on a throwaway PR.
 
 ## M0 exit criteria
