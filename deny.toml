@@ -1,4 +1,6 @@
 [licenses]
+# Workspace-private crates (publish = false) are internal and need no license field.
+private = { ignore = true }
 allow = [
     "MIT",
     "Apache-2.0",
