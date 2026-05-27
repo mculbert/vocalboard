@@ -74,6 +74,11 @@ jobs:
         env:
           SKIP_SIDECAR_TESTS: ${{ runner.os != 'Linux' && '1' || '' }}
 
+      - name: Check generated TypeScript bindings are up to date (Linux only)
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- src/lib/ipc/types.ts
+        working-directory: ${{ github.workspace }}
+
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2
         with:
