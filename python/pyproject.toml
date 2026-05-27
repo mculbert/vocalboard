@@ -11,6 +11,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["vocalboard_sidecar"]
 
+[dependency-groups]
+dev = ["pytest>=7"]
+
 [project.optional-dependencies]
 docs = ["pydoc-markdown>=4.8"]
 

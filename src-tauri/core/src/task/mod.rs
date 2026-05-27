@@ -3,12 +3,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{bail, Context as _, Result};
 use serde_json::Value;
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
-use tokio::sync::{Mutex, RwLock, oneshot};
-use tokio::time::{Duration, timeout};
+use tokio::sync::{oneshot, Mutex, RwLock};
+use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
@@ -222,16 +222,15 @@ mod tests {
     ///
     /// Set `SKIP_SIDECAR_TESTS=1` to skip when Python is unavailable.
     #[tokio::test]
-    async fn sidecar_start_and_ping() {
+    async fn sidecar_start_and_ping() -> anyhow::Result<()> {
         if std::env::var("SKIP_SIDECAR_TESTS").as_deref() == Ok("1") {
             eprintln!("SKIP_SIDECAR_TESTS=1; skipping");
-            return;
+            return Ok(());
         }
         let bin = python_bin();
-        let mgr = SidecarManager::start(&bin, &["-m", "vocalboard_sidecar"])
-            .await
-            .expect("sidecar should start");
-        let result = mgr.ping().await.expect("ping should succeed");
+        let mgr = SidecarManager::start(&bin, &["-m", "vocalboard_sidecar"]).await?;
+        let result = mgr.ping().await?;
         assert!(result.pong, "expected pong == true");
+        Ok(())
     }
 }

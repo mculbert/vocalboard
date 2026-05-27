@@ -39,6 +39,8 @@ export default ts.config(
 			'src-tauri/',
 			'src/lib/i18n/',
 			'src/lib/ipc/types.ts',
+			'docs/public/',
+			'docs/resources/',
 		],
 	},
 );

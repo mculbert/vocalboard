@@ -160,7 +160,8 @@ placeholders) and real content can be added incrementally through M7.
 
 > **Deferred to M7:** hand-authored architecture/data-structure overviews under
 > `internals/`; filling `reference/` and `settings/` manuals; wiring `docs:build`
-> into CI; the Rust `rustdoc_to_md.py` full implementation; Nuitka binary build.
+> into CI; the Rust `rustdoc_to_md.py` full implementation; Nuitka binary build;
+> real app icons replacing the placeholder `src-tauri/icons/icon.ico`.
 
 ## Step 10 — CI skeleton
 

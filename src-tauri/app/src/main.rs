@@ -51,7 +51,9 @@ async fn ping_sidecar(state: tauri::State<'_, SidecarState>) -> Result<proto::Pi
 ///
 /// Unknown keys already in the store (written by a newer app version) are preserved:
 /// we set only the keys we know about, never deleting anything.
-fn init_settings(app: &tauri::App) -> Result<vb_core::settings::Settings, Box<dyn std::error::Error>> {
+fn init_settings(
+    app: &tauri::App,
+) -> Result<vb_core::settings::Settings, Box<dyn std::error::Error>> {
     use tauri_plugin_store::StoreExt as _;
 
     let store = app.store("settings.json").context("open settings store")?;
@@ -64,7 +66,9 @@ fn init_settings(app: &tauri::App) -> Result<vb_core::settings::Settings, Box<dy
     });
 
     // Write defaults for keys not yet present in the store (first launch or new key).
-    let json = settings.to_json().context("serialize settings for default write")?;
+    let json = settings
+        .to_json()
+        .context("serialize settings for default write")?;
     if let serde_json::Value::Object(map) = json {
         for (key, value) in map {
             if !store.has(&key) {
@@ -140,8 +144,7 @@ fn main() -> tauri::Result<()> {
 fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
     use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
 
