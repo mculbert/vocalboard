@@ -125,7 +125,6 @@ impl SidecarManager {
     async fn send(&self, command: &str, version: u32, payload: Value) -> Result<Value> {
         let request_id = Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(request_id.clone(), tx);
 
         let msg = ToSidecar::Request(RequestEnvelope {
             request_id: request_id.clone(),
@@ -135,6 +134,8 @@ impl SidecarManager {
         });
         let line = serde_json::to_string(&msg).context("serialize request")?;
 
+        // Insert into pending only after a successful write+flush; an early-return
+        // error here would otherwise leave an entry that is never resolved.
         {
             let mut stdin = self.stdin.lock().await;
             stdin
@@ -143,6 +144,7 @@ impl SidecarManager {
                 .context("write to sidecar stdin")?;
             stdin.flush().await.context("flush sidecar stdin")?;
         }
+        self.pending.lock().await.insert(request_id.clone(), tx);
 
         match timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(Ok(val))) => Ok(val),
