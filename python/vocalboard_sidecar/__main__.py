@@ -7,7 +7,7 @@ import sys
 import structlog
 
 from vocalboard_sidecar.dispatch import (
-    dispatch,
+    handle_message,
     make_log_msg,
     parse_message,
 )
@@ -31,7 +31,7 @@ def main() -> None:
             msg = parse_message(raw_line)
         except (ValueError, json.JSONDecodeError):
             continue
-        response = dispatch(msg, REGISTRY, cancel_flags)
+        response = handle_message(msg, REGISTRY, cancel_flags)
         if response is not None:
             _emit(response)
 
