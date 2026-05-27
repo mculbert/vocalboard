@@ -29,6 +29,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Exclude target directory from Windows Defender scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}\src-tauri\target"
+
       - name: Install Linux system dependencies
         if: runner.os == 'Linux'
         run: |
