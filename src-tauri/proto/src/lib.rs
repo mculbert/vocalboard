@@ -31,8 +31,8 @@ mod tests {
     fn export_ts_bindings() -> Result<(), Box<dyn std::error::Error>> {
         use crate::{commands, envelope, error, sidecar};
 
-        let out_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../src/lib/ipc/types.ts");
+        let out_path =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../src/lib/ipc/types.ts");
 
         std::fs::create_dir_all(out_path.parent().ok_or("no parent dir")?)?;
 

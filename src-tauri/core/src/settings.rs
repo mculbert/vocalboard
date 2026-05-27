@@ -171,16 +171,10 @@ pub fn migrate(raw: serde_json::Value) -> Result<serde_json::Value> {
 }
 
 fn version_of(value: &serde_json::Value) -> u32 {
-    value
-        .get("version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32
+    value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32
 }
 
-fn apply_migration(
-    value: serde_json::Value,
-    from_version: u32,
-) -> Result<serde_json::Value> {
+fn apply_migration(value: serde_json::Value, from_version: u32) -> Result<serde_json::Value> {
     match from_version {
         // v0 → v1: initial persisted format.  No structural change; just stamp version.
         // (There was no on-disk "v0"; this branch handles missing or zero version fields.)
