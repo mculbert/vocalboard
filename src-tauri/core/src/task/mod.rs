@@ -212,10 +212,46 @@ impl SidecarManager {
 
 #[cfg(test)]
 mod tests {
-    use super::SidecarManager;
+    use super::{PendingMap, SidecarManager};
+    use std::sync::Arc;
+    use tokio::sync::{oneshot, Mutex, RwLock};
 
     fn python_bin() -> String {
         std::env::var("VOCALBOARD_PYTHON").unwrap_or_else(|_| "python".to_owned())
+    }
+
+    /// `route_line` must resolve a pending request as `Err` when the sidecar emits
+    /// `unknown_command`, rather than leaving the waiter to time out.
+    #[tokio::test]
+    async fn route_line_resolves_unknown_command_as_err() -> anyhow::Result<()> {
+        use anyhow::Context as _;
+        use std::collections::HashMap;
+
+        let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
+        let status = Arc::new(RwLock::new(proto::SidecarStatus::NotStarted));
+        let (ready_tx, _ready_rx) = oneshot::channel::<anyhow::Result<()>>();
+        let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
+
+        let (tx, mut rx) = oneshot::channel();
+        pending.lock().await.insert("rid-1".to_string(), tx);
+
+        let line = r#"{"type":"error","request_id":"rid-1","code":"unknown_command","message":"no such command"}"#;
+        SidecarManager::route_line(line, &pending, &status, &ready_tx).await;
+
+        let result = rx
+            .try_recv()
+            .context("route_line should have resolved the pending sender")?;
+        match result {
+            Err(err) => {
+                assert!(
+                    matches!(err.code, proto::ErrorCode::UnknownCommand),
+                    "expected UnknownCommand, got {:?}",
+                    err.code
+                );
+            }
+            Ok(_) => anyhow::bail!("unknown_command should resolve as Err, not Ok"),
+        }
+        Ok(())
     }
 
     /// Spawn the sidecar, await the ready handshake, then ping and check pong.

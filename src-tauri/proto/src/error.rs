@@ -36,4 +36,11 @@ pub enum ErrorCode {
     Cancelled,
     /// Python sidecar did not respond to the ready handshake within the startup timeout.
     SidecarNotReady,
+    /// Command name not recognized by the sidecar, or unsupported message type.
+    UnknownCommand,
+    /// Unhandled error inside a sidecar handler.
+    InternalError,
+    /// An error code emitted by a newer component than this build understands.
+    #[serde(other)]
+    Unknown,
 }
