@@ -1,0 +1,44 @@
+notes/
+
+# Rust
+target/
+
+# Node / frontend
+node_modules/
+.svelte-kit/
+build/
+
+# Tauri
+src-tauri/binaries/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Docs build output
+docs/public/
+docs/resources/
+
+# Auto-generated API docs (regenerate with scripts/gen_api_docs.sh)
+docs/content/internals/api/rust/*
+!docs/content/internals/api/rust/_index.md
+docs/content/internals/api/python/*
+!docs/content/internals/api/python/_index.md
+docs/content/internals/api/frontend/*
+!docs/content/internals/api/frontend/_index.md
+
+# Vocalboard project data
+*.vbdata/
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# OS / editor
+*~
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

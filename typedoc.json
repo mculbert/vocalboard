@@ -1,0 +1,8 @@
+{
+  "entryPointStrategy": "expand",
+  "entryPoints": ["src/lib"],
+  "out": "docs/content/internals/api/frontend",
+  "plugin": ["typedoc-plugin-markdown"],
+  "readme": "none",
+  "hidePageHeader": true
+}

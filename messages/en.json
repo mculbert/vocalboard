@@ -1,0 +1,13 @@
+{
+  "welcome_title": "Vocalboard",
+  "welcome_loading": "Starting…",
+  "label_version": "Version",
+  "label_sidecar": "Sidecar",
+  "label_roundtrip": "Round-trip",
+  "status_sidecar_ready": "ready",
+  "status_sidecar_not_started": "not started",
+  "status_sidecar_error": "error",
+  "status_version": "{version}",
+  "status_pong": "OK",
+  "status_fail": "failed"
+}

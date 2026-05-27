@@ -1,0 +1,24 @@
+title = "Vocalboard"
+baseURL = "/"
+
+enableRobotsTXT = true
+enableGitInfo = true
+
+[[menu.main]]
+  name = "Reference"
+  pageRef = "/reference"
+  weight = 1
+
+[[menu.main]]
+  name = "Settings"
+  pageRef = "/settings"
+  weight = 2
+
+[[menu.main]]
+  name = "Internals"
+  pageRef = "/internals"
+  weight = 3
+
+[module]
+  [[module.imports]]
+    path = "github.com/imfing/hextra"

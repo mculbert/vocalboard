@@ -1,0 +1,237 @@
+//! Task queue and sidecar manager: dispatches ML inference requests to the Python process.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::{Context as _, Result, bail};
+use serde_json::Value;
+use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+use tokio::process::{Child, ChildStdin, Command};
+use tokio::sync::{Mutex, RwLock, oneshot};
+use tokio::time::{Duration, timeout};
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
+use proto::{ErrorMsg, FromSidecar, RequestEnvelope, SidecarStatus, ToSidecar};
+
+type PendingMap = Mutex<HashMap<String, oneshot::Sender<Result<Value, ErrorMsg>>>>;
+
+/// Manages the lifecycle of the Python sidecar process and routes IPC messages.
+///
+/// Spawn via [`SidecarManager::start`]; hold the returned value as Tauri managed
+/// state so commands can call [`SidecarManager::ping`].
+pub struct SidecarManager {
+    stdin: Mutex<ChildStdin>,
+    /// In-flight requests awaiting a sidecar response, keyed by `request_id`.
+    pending: Arc<PendingMap>,
+    status: Arc<RwLock<SidecarStatus>>,
+    /// Kept alive so the child process is not dropped while the manager exists.
+    _child: Mutex<Child>,
+}
+
+impl SidecarManager {
+    /// Spawn the Python sidecar and wait up to 30 seconds for the "sidecar ready" handshake.
+    ///
+    /// In dev, pass `python_bin = "python"` and `python_args = &["-m", "vocalboard_sidecar"]`.
+    pub async fn start(python_bin: &str, python_args: &[&str]) -> Result<Arc<Self>> {
+        let mut child = Command::new(python_bin)
+            .args(python_args)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .with_context(|| format!("failed to spawn sidecar: {python_bin}"))?;
+
+        let stdin = child.stdin.take().context("child stdin not captured")?;
+        let stdout = child.stdout.take().context("child stdout not captured")?;
+        let stderr = child.stderr.take().context("child stderr not captured")?;
+
+        let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
+        let status = Arc::new(RwLock::new(SidecarStatus::NotStarted));
+
+        let manager = Arc::new(Self {
+            stdin: Mutex::new(stdin),
+            pending: Arc::clone(&pending),
+            status: Arc::clone(&status),
+            _child: Mutex::new(child),
+        });
+
+        // Pipe sidecar stderr (structlog output) to tracing at debug level.
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                debug!(target: "sidecar::stderr", "{line}");
+            }
+        });
+
+        // Channel that fires once "sidecar ready" is seen on stdout.
+        let (ready_tx, ready_rx) = oneshot::channel::<Result<()>>();
+        let ready_tx = Arc::new(Mutex::new(Some(ready_tx)));
+
+        let pending2 = Arc::clone(&pending);
+        let status2 = Arc::clone(&status);
+        let ready_tx2 = Arc::clone(&ready_tx);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        Self::route_line(&line, &pending2, &status2, &ready_tx2).await;
+                    }
+                    Ok(None) => {
+                        info!("sidecar stdout closed");
+                        break;
+                    }
+                    Err(e) => {
+                        error!("sidecar stdout read error: {e}");
+                        break;
+                    }
+                }
+            }
+            // Unblock caller if stdout closes before the ready signal.
+            let mut guard = ready_tx2.lock().await;
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(Err(anyhow::anyhow!("sidecar stdout closed before ready")));
+            }
+            *status2.write().await = SidecarStatus::Error;
+        });
+
+        match timeout(Duration::from_secs(30), ready_rx).await {
+            Ok(Ok(Ok(()))) => {
+                info!("sidecar ready");
+                Ok(manager)
+            }
+            Ok(Ok(Err(e))) => bail!("sidecar failed before ready: {e}"),
+            Ok(Err(_)) => bail!("ready channel dropped before signal"),
+            Err(_) => bail!("sidecar did not become ready within 30 s"),
+        }
+    }
+
+    /// Send a `ping` request to the sidecar and return the pong result.
+    pub async fn ping(&self) -> Result<proto::PingResult> {
+        let payload = self.send("ping", 1, serde_json::json!({})).await?;
+        serde_json::from_value(payload).context("invalid ping response payload")
+    }
+
+    /// Returns the current sidecar lifecycle status.
+    pub async fn status(&self) -> SidecarStatus {
+        self.status.read().await.clone()
+    }
+
+    // ── private ───────────────────────────────────────────────────────────────
+
+    /// Serialize and send a request; await the result payload with a 30 s timeout.
+    async fn send(&self, command: &str, version: u32, payload: Value) -> Result<Value> {
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        self.pending.lock().await.insert(request_id.clone(), tx);
+
+        let msg = ToSidecar::Request(RequestEnvelope {
+            request_id: request_id.clone(),
+            command: command.to_string(),
+            version,
+            payload,
+        });
+        let line = serde_json::to_string(&msg).context("serialize request")?;
+
+        {
+            let mut stdin = self.stdin.lock().await;
+            stdin
+                .write_all(format!("{line}\n").as_bytes())
+                .await
+                .context("write to sidecar stdin")?;
+            stdin.flush().await.context("flush sidecar stdin")?;
+        }
+
+        match timeout(Duration::from_secs(30), rx).await {
+            Ok(Ok(Ok(val))) => Ok(val),
+            Ok(Ok(Err(e))) => bail!("sidecar error {:?}: {}", e.code, e.message),
+            Ok(Err(_)) => bail!("response channel dropped for {request_id}"),
+            Err(_) => {
+                self.pending.lock().await.remove(&request_id);
+                bail!("sidecar request timed out: {request_id}")
+            }
+        }
+    }
+
+    /// Parse one NDJSON stdout line and route it to the appropriate waiter or logger.
+    async fn route_line(
+        line: &str,
+        pending: &PendingMap,
+        status: &RwLock<SidecarStatus>,
+        ready_tx: &Mutex<Option<oneshot::Sender<Result<()>>>>,
+    ) {
+        let msg: FromSidecar = match serde_json::from_str(line) {
+            Ok(m) => m,
+            Err(e) => {
+                warn!("sidecar: unrecognised stdout line ({e}): {line}");
+                return;
+            }
+        };
+
+        match msg {
+            FromSidecar::Log(log) => {
+                info!(target: "sidecar::log", level = ?log.level, "{}", log.msg);
+                if log.msg == "sidecar ready" {
+                    *status.write().await = SidecarStatus::Ready;
+                    let mut guard = ready_tx.lock().await;
+                    if let Some(tx) = guard.take() {
+                        let _ = tx.send(Ok(()));
+                    }
+                }
+            }
+            FromSidecar::Progress(p) => {
+                debug!(
+                    target: "sidecar::progress",
+                    request_id = %p.request_id,
+                    step = %p.step,
+                    pct = p.pct,
+                );
+            }
+            FromSidecar::Result(r) => {
+                let mut map = pending.lock().await;
+                if let Some(tx) = map.remove(&r.request_id) {
+                    let _ = tx.send(Ok(r.payload));
+                } else {
+                    warn!("sidecar: result for unknown request_id {}", r.request_id);
+                }
+            }
+            FromSidecar::Error(e) => {
+                // Extract request_id before potentially moving e into the channel.
+                let rid = e.request_id.as_deref().unwrap_or("").to_owned();
+                let mut map = pending.lock().await;
+                if let Some(tx) = map.remove(&rid) {
+                    let _ = tx.send(Err(e));
+                } else {
+                    error!(target: "sidecar::error", code = ?e.code, "{}", e.message);
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SidecarManager;
+
+    fn python_bin() -> String {
+        std::env::var("VOCALBOARD_PYTHON").unwrap_or_else(|_| "python".to_owned())
+    }
+
+    /// Spawn the sidecar, await the ready handshake, then ping and check pong.
+    ///
+    /// Set `SKIP_SIDECAR_TESTS=1` to skip when Python is unavailable.
+    #[tokio::test]
+    async fn sidecar_start_and_ping() {
+        if std::env::var("SKIP_SIDECAR_TESTS").as_deref() == Ok("1") {
+            eprintln!("SKIP_SIDECAR_TESTS=1; skipping");
+            return;
+        }
+        let bin = python_bin();
+        let mgr = SidecarManager::start(&bin, &["-m", "vocalboard_sidecar"])
+            .await
+            .expect("sidecar should start");
+        let result = mgr.ping().await.expect("ping should succeed");
+        assert!(result.pong, "expected pong == true");
+    }
+}

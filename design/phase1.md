@@ -34,6 +34,8 @@ Establishes the spine all three layers code against.
 - Python sidecar skeleton: `pyproject.toml`, package, NDJSON dispatch-loop stub,
   "sidecar ready" signal
 - App settings schema + `tauri-plugin-store` load/migrate (needed by ML later)
+- Docs skeleton: Hugo site + auto-gen wiring (pydoc-markdown / typedoc / rustdoc stub);
+  placeholder content tree; `pnpm docs:build` works now; hand-authored content in M7
 - CI skeleton: `cargo fmt/clippy/test`, `pytest`, `pnpm check/test/build`
 
 ## M1 — Core persistence & timeline engine *(critical path; test heavily)*
@@ -69,7 +71,9 @@ Depends on M1 (tree → EDL). Decode/resample subparts can start late in M1.
 ## M3 — Python sidecar & ML *(parallelizable with M2 once M0 types exist)*
 
 - SidecarManager + in-memory `TaskQueue` / `TaskDispatcher`; model registry (lazy
-  load, idle unload); cancellation
+  load, idle unload); cancellation; **replace the M0 blocking startup** (window
+  currently blocks on `rx.recv()` until sidecar is ready — M3 should open the window
+  immediately and surface a loading state via `get_app_info` / `SidecarStatus`)
 - Model manifest scan + per-role path resolution from settings
 - WhisperX (preproc → quality gate → transcribe/align/diarize) → result format;
   speaker-embedding merge (settings threshold)
@@ -108,13 +112,16 @@ Depends on M1 (tree/undo) + M2 (splices/EDL) + M4 (real transcripts to edit).
   Settings); progress / task-queue UI
 - Accessibility (aria, focus management, live regions), i18n catalog, rune stores +
   event subscriptions
+- No-hardcoded-string CI gate (D2 in conventions.md): add a custom ESLint rule or
+  script that flags literal markup text in `.svelte` files and wire it into the
+  `frontend-tests` CI job (no clean off-the-shelf rule existed at M0 scaffolding time)
 
 ## M7 — Packaging, docs, hardening
 
 - Nuitka sidecar build per platform; Tauri bundle; `release.yml`; model download +
   SHA-256 verification
 - Logging (tracing / structlog), diagnostics bundle, crash-report URL
-- Auto-generated API docs (pydoc-markdown / typedoc-plugin-markdown / rustdoc-JSON
-  converter) → Hugo
+- Complete auto-generated API docs (M0 wired the tools; M7 fills in real docstrings
+  and finishes the `rustdoc_to_md.py` converter); wire `docs:build` into CI
 - Playwright E2E (pre-release); performance pass (multi-hour transcripts, playback
   latency)

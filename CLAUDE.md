@@ -17,6 +17,9 @@ Design complete; pre-implementation. The source tree is not yet scaffolded —
 - Roadmap: `design/phase1.md` (milestones M0–M7).
 - When a decision changes, **update the relevant `design/` doc** instead of letting
   docs drift, and keep cross-doc references consistent.
+- When implementation leaves a deliberate shortcut or stub, **immediately update the
+  affected downstream milestone in the relevant `design/phase*.md`**
+  before closing the commit — don't rely on code comments alone to surface it later.
 
 ## Architectural invariants (do not violate)
 - **Rust owns all state, persistence, and audio; Python is ML inference ONLY.** Signal
@@ -72,3 +75,6 @@ Design complete; pre-implementation. The source tree is not yet scaffolded —
 - **Merges from `claude/*` to main or any development branch are squash merges** unless
   otherwise specified.
 - Don't push unless asked.
+- **Pre-commit checklist:** before running `git commit`, confirm: (1) if this diff
+  leaves any shortcut, stub, or deferred item, the relevant `design/phase*.md` is
+  also staged with the downstream milestone updated.

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "model_dir": null,
+  "model_paths": {
+    "transcription": null,
+    "vad": null,
+    "forced_alignment": null,
+    "enhancement": null,
+    "sound_classification": null,
+    "llm": null
+  },
+  "default_sample_rate": 48000,
+  "speaker_merge_threshold": 0.71,
+  "resampling_quality": "balanced",
+  "gpu_enabled": false,
+  "snapshot_idle_seconds": 30,
+  "model_idle_unload_seconds": 300,
+  "update_feed_url": null,
+  "recent_projects": [],
+  "_future_key": "written_by_a_newer_version"
+}

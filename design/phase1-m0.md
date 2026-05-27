@@ -87,8 +87,8 @@ feature work begins.
 
 ## Step 7 — SvelteKit frontend scaffold + round-trip
 
-- `create-svelte` with `@sveltejs/adapter-static`; add Tailwind v4, Bits UI, Paraglide
-  (`messages/en.json` + compile step).
+- `create-svelte` with `@sveltejs/adapter-static`; add Tailwind v4, Bits UI,
+  shadcn-svelte (New York style), Paraglide (`messages/en.json` + compile step).
 - `src/lib/ipc/commands.ts` typed `invoke` wrappers; `src/lib/ipc/types.ts` (generated
   in Step 3).
 - `routes/+page.svelte` welcome stub that calls `get_app_info` / `ping_sidecar` and
@@ -112,7 +112,57 @@ feature work begins.
 - **Verify:** first launch writes defaults; unknown keys preserved on round-trip; the fixture
   round-trip test passes.
 
-## Step 9 — CI skeleton
+## Step 9 — Docs skeleton
+
+Sets up the Hugo site and auto-generation wiring so the docs build now (with
+placeholders) and real content can be added incrementally through M7.
+
+- **Hugo site:** initialise `docs/` as a Hugo module using the
+  [Hextra](https://github.com/imfing/hextra) theme (markdown-native, no
+  Node build step); add `docs/public/` and `docs/resources/` to `.gitignore`.
+  `docs/hugo.toml` sets `title = "Vocalboard"`, `baseURL = "/"`, and
+  `theme = "hextra"`.
+- **Content directory tree** (mirrors [ops.md § Repository layout](ops.md#repository-layout)):
+  - `docs/content/reference/_index.md` — placeholder ("User reference manual — to be
+    written in M7")
+  - `docs/content/settings/_index.md` — placeholder linking to the settings schema in
+    `design/ops.md`; a brief summary table of the Phase 1 keys serves as an interim
+    reference
+  - `docs/content/internals/_index.md` — one-paragraph orientation pointing to
+    `design/index.md` as the authoritative TDD until M7 hand-authored overviews land
+  - `docs/content/internals/api/rust/_index.md`, `api/python/_index.md`,
+    `api/frontend/_index.md` — each notes "Auto-generated — run `scripts/gen_api_docs.sh`
+    to populate"
+- **Auto-gen tool dependencies (build-only; zero runtime cost):**
+  - Python: add `pydoc-markdown` to `pyproject.toml` under
+    `[project.optional-dependencies] docs`; add a `pydoc-markdown.yml` config
+    pointing at `python/vocalboard_sidecar/`, output to
+    `docs/content/internals/api/python/`
+  - Frontend: add `typedoc` + `typedoc-plugin-markdown` to `devDependencies`; add
+    `typedoc.json` pointing at `src/lib/**/*.ts` with
+    `"out": "docs/content/internals/api/frontend"`; add `"docs:api:frontend": "typedoc"`
+    to `package.json` scripts
+  - Rust: `rustdoc --output-format json` requires nightly (the app itself stays on
+    stable); add a `scripts/rustdoc_to_md.py` stub that reads rustdoc JSON and emits
+    Markdown stubs (full implementation deferred to M7; stub emits one placeholder
+    `.md` per crate so Hugo doesn't error on empty directories); the script documents
+    the `rustup run nightly` invocation required to produce its input
+- **`scripts/gen_api_docs.sh`** (bash) and **`scripts/gen_api_docs.ps1`** (PowerShell):
+  each calls all three generators in sequence; accept `--rust-only`, `--python-only`,
+  `--frontend-only` flags; the Rust step no-ops if `nightly` toolchain is absent (with
+  a warning) so CI doesn't block on it until M7
+- **npm scripts in `package.json`:**
+  - `"docs:api"` → `scripts/gen_api_docs.sh` (or `.ps1` on Windows)
+  - `"docs:build"` → `hugo --source docs`
+- **Verify:** `pnpm run docs:build` completes with no errors on the placeholder
+  content; `pnpm run docs:api` runs without fatal error (stubs emit placeholder
+  output); the Hugo output contains pages for all four `internals/api/` subsections.
+
+> **Deferred to M7:** hand-authored architecture/data-structure overviews under
+> `internals/`; filling `reference/` and `settings/` manuals; wiring `docs:build`
+> into CI; the Rust `rustdoc_to_md.py` full implementation; Nuitka binary build.
+
+## Step 10 — CI skeleton
 
 - `.github/workflows/ci.yml` with three jobs: `rust-tests` (`fmt --check`,
   `clippy -D warnings`, `test --workspace`, `cargo audit`, `cargo deny check` on
@@ -121,6 +171,12 @@ feature work begins.
 - Widen `python-tests` and `frontend-tests` from ubuntu-only to the
   ubuntu/windows/macos matrix the `rust-tests` job uses ([conventions.md](conventions.md) M1).
 - Seed one trivial test per language so runners aren't empty.
+- **Sidecar integration test in `rust-tests`:** `cargo test --workspace` includes
+  `core::task::tests::sidecar_start_and_ping`, which requires a working Python
+  interpreter with `vocalboard-sidecar` installed. The `rust-tests` job must either
+  install the sidecar (`uv pip install -e python/`) and set `VOCALBOARD_PYTHON` to
+  that interpreter, or set `SKIP_SIDECAR_TESTS=1` to skip it (acceptable only if
+  the `python-tests` job already covers the sidecar logic via `pytest`).
 - **Verify:** CI green on a throwaway PR.
 
 ## M0 exit criteria
@@ -132,3 +188,5 @@ feature work begins.
   (frontend → Rust → Python → back).
 - The `proto` contract + generated TS types are in place; the `core/` module tree
   exists as stubs ready for M1.
+- `pnpm run docs:build` succeeds on the placeholder Hugo site; auto-gen wiring is in
+  place for all three languages.
