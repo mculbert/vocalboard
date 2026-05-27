@@ -39,6 +39,7 @@ impl SidecarManager {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("failed to spawn sidecar: {python_bin}"))?;
 
