@@ -8,8 +8,9 @@ use crate::error::ErrorCode;
 ///
 /// Every line of stdout is one NDJSON object discriminated by `"type"`:
 /// ```json
+/// {"type":"ready"}
 /// {"type":"progress","request_id":"…","step":"transcribe","step_index":1,"step_count":4,"pct":42,"label":"Transcribing…"}
-/// {"type":"log","request_id":null,"level":"info","msg":"sidecar ready"}
+/// {"type":"log","request_id":null,"level":"info","msg":"…"}
 /// {"type":"result","request_id":"…","payload":{…}}
 /// {"type":"error","request_id":"…","code":"cancelled","message":"…"}
 /// ```
@@ -17,6 +18,8 @@ use crate::error::ErrorCode;
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromSidecar {
+    /// Typed startup signal emitted once the sidecar is ready to accept requests.
+    Ready,
     /// Progress update for an in-flight request.
     Progress(ProgressMsg),
     /// Structured log line (may be process-level, with `request_id = null`).
@@ -64,8 +67,7 @@ pub enum LogLevel {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct LogMsg {
-    /// UUIDv4 of the originating request, or `null` for process-level messages
-    /// (e.g. the startup `"sidecar ready"` log).
+    /// UUIDv4 of the originating request, or `null` for process-level messages.
     pub request_id: Option<String>,
     /// Severity level.
     pub level: LogLevel,

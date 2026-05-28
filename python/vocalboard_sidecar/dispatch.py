@@ -4,7 +4,11 @@ from __future__ import annotations
 import json
 from typing import Any, Callable
 
+import structlog
+
 Handler = Callable[[dict[str, Any], bool], Any]
+
+_log = structlog.get_logger()
 
 
 def parse_message(line: str) -> dict[str, Any]:
@@ -73,3 +77,21 @@ def dispatch(
     cancelled = cancel_flags.get(request_id, False)
     result_payload = handler(payload, cancelled)
     return make_result_msg(request_id, result_payload)
+
+
+def handle_message(
+    msg: dict[str, Any],
+    registry: dict[str, Handler],
+    cancel_flags: dict[str, bool],
+) -> dict[str, Any] | None:
+    """Dispatch a parsed message, converting handler exceptions to internal_error responses.
+
+    Keeps the sidecar loop alive when a handler raises unexpectedly.
+    Returns None for cancel messages (same as dispatch).
+    """
+    try:
+        return dispatch(msg, registry, cancel_flags)
+    except Exception as exc:
+        request_id = msg.get("request_id")
+        _log.error("handler_exception", request_id=request_id, exc_info=exc)
+        return make_error_msg(request_id, "internal_error", str(exc))
