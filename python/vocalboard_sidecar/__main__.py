@@ -7,8 +7,7 @@ import sys
 import structlog
 
 from vocalboard_sidecar.dispatch import (
-    dispatch,
-    make_log_msg,
+    handle_message,
     parse_message,
 )
 from vocalboard_sidecar.registry import REGISTRY
@@ -24,14 +23,14 @@ def _emit(msg: dict) -> None:  # type: ignore[type-arg]
 
 def main() -> None:
     _log.info("sidecar_starting")
-    _emit(make_log_msg("sidecar ready"))
+    _emit({"type": "ready"})
     cancel_flags: dict[str, bool] = {}
     for raw_line in sys.stdin:
         try:
             msg = parse_message(raw_line)
         except (ValueError, json.JSONDecodeError):
             continue
-        response = dispatch(msg, REGISTRY, cancel_flags)
+        response = handle_message(msg, REGISTRY, cancel_flags)
         if response is not None:
             _emit(response)
 

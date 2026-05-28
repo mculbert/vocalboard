@@ -7,6 +7,7 @@ import pytest
 
 from vocalboard_sidecar.dispatch import (
     dispatch,
+    handle_message,
     make_error_msg,
     make_log_msg,
     make_result_msg,
@@ -88,6 +89,56 @@ class TestDispatch:
         assert response is not None
         assert response["type"] == "error"
         assert "bogus" in response["message"]
+
+
+class TestHandleMessage:
+    def test_handler_exception_returns_internal_error(self) -> None:
+        def bad_handler(payload: dict, cancelled: bool) -> None:  # type: ignore[type-arg]
+            raise RuntimeError("boom")
+
+        registry = {"explode": bad_handler}
+        msg = {
+            "type": "request",
+            "request_id": "r5",
+            "command": "explode",
+            "version": 1,
+            "payload": {},
+        }
+        response = handle_message(msg, registry, {})
+        assert response is not None
+        assert response["type"] == "error"
+        assert response["code"] == "internal_error"
+        assert response["request_id"] == "r5"
+
+    def test_handler_exception_preserves_loop(self) -> None:
+        """A raising handler must not propagate; the next call should succeed."""
+        calls: list[str] = []
+
+        def bad_handler(payload: dict, cancelled: bool) -> None:  # type: ignore[type-arg]
+            raise ValueError("oops")
+
+        def ok_handler(payload: dict, cancelled: bool) -> dict:  # type: ignore[type-arg]
+            calls.append("ok")
+            return {"pong": True}
+
+        registry = {"fail": bad_handler, "ping": ok_handler}
+        handle_message(
+            {"type": "request", "request_id": "r6", "command": "fail", "payload": {}},
+            registry,
+            {},
+        )
+        response = handle_message(
+            {"type": "request", "request_id": "r7", "command": "ping", "payload": {}},
+            registry,
+            {},
+        )
+        assert calls == ["ok"]
+        assert response is not None
+        assert response["type"] == "result"
+
+    def test_cancel_still_returns_none(self) -> None:
+        response = handle_message({"type": "cancel", "request_id": "r8"}, REGISTRY, {})
+        assert response is None
 
 
 class TestMessageBuilders:

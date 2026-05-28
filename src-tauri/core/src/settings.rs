@@ -5,7 +5,7 @@
 //! dependency so it can be exercised in unit and fixture-based tests without a
 //! running Tauri runtime.
 
-use anyhow::{Context as _, Result};
+use anyhow::{bail, Context as _, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -171,16 +171,10 @@ pub fn migrate(raw: serde_json::Value) -> Result<serde_json::Value> {
 }
 
 fn version_of(value: &serde_json::Value) -> u32 {
-    value
-        .get("version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0) as u32
+    value.get("version").and_then(|v| v.as_u64()).unwrap_or(0) as u32
 }
 
-fn apply_migration(
-    value: serde_json::Value,
-    from_version: u32,
-) -> Result<serde_json::Value> {
+fn apply_migration(value: serde_json::Value, from_version: u32) -> Result<serde_json::Value> {
     match from_version {
         // v0 → v1: initial persisted format.  No structural change; just stamp version.
         // (There was no on-disk "v0"; this branch handles missing or zero version fields.)
@@ -196,9 +190,10 @@ fn apply_migration(
             );
             Ok(serde_json::Value::Object(obj))
         }
-        // Unhandled version inside the migration range — should not happen if
-        // apply_migration is only called for ver < CURRENT_VERSION and all versions
-        // in [0, CURRENT_VERSION) have explicit arms above.
-        _ => Ok(value),
+        // Unhandled version inside the migration range. `migrate` only calls this
+        // for ver < CURRENT_VERSION, so a missing arm means a newer CURRENT_VERSION
+        // shipped without its migration step — fail loudly rather than spin forever
+        // (the arm must bump the version, or `migrate`'s loop never terminates).
+        _ => bail!("no migration path from settings version {from_version}"),
     }
 }

@@ -32,11 +32,36 @@ Establishes the spine all three layers code against.
 - SvelteKit static scaffold (Tailwind v4, Bits UI, Paraglide); generated TS command
   wrappers + types from the JSON schemas
 - Python sidecar skeleton: `pyproject.toml`, package, NDJSON dispatch-loop stub,
-  "sidecar ready" signal
+  typed `Ready` startup signal
 - App settings schema + `tauri-plugin-store` load/migrate (needed by ML later)
 - Docs skeleton: Hugo site + auto-gen wiring (pydoc-markdown / typedoc / rustdoc stub);
   placeholder content tree; `pnpm docs:build` works now; hand-authored content in M7
 - CI skeleton: `cargo fmt/clippy/test`, `pytest`, `pnpm check/test/build`
+
+### M0 retro (complete)
+
+Delivered green; two review rounds remediated (`phase1-M0-review.md`, plus a second
+pass R1–R3). Notes to carry forward:
+
+- **Reason through both orderings when touching concurrency.** Review round 1's
+  `pending`-map fix (insert after write) silently created a response-drop race that
+  round 2 had to fix — it traded a benign leak for a timing bug. The "obvious" fix was
+  the wrong one.
+- **`send()` has no concurrent-request test.** M0 only issues one in-flight `ping`; the
+  race is fixed but untested under overlap. Add a multi-request test in M1 when the
+  first real command lands on that path.
+- **CSP is an M2 tripwire.** `default-src 'self'` with no `style-src` will block the
+  inline styles popover/menu libs emit — surfaces only when overlay UI arrives (M6
+  dialogs / M2-era components). Revisit `style-src` against
+  [architecture.md](architecture.md) then.
+- **Cross-OS sidecar coverage gap.** The Rust↔Python integration test runs Linux-only;
+  Windows/macOS rely on `pytest` for the contract. Won't catch venv/path issues until
+  the app actually runs on those platforms.
+- **Settings round-trip is half-tested.** The fixture proves unknown keys don't *block*
+  load; the *preservation* path lives in `init_settings` (untested). Give it a real
+  through-the-store test once settings hold user data.
+- **Doc-sync discipline earned its keep** — tracked deferrals (this retro, M3 startup,
+  M6 D2) made the review tractable. Keep updating downstream milestones as shortcuts land.
 
 ## M1 — Core persistence & timeline engine *(critical path; test heavily)*
 

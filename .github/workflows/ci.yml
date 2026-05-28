@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Rust ─────────────────────────────────────────────────────────────────────
+  rust-tests:
+    name: Rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: src-tauri
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Exclude target directory from Windows Defender scanning
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}\src-tauri\target"
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+        working-directory: ${{ github.workspace }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Set up Python for sidecar integration test (Linux only)
+        if: runner.os == 'Linux'
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python sidecar (Linux only)
+        if: runner.os == 'Linux'
+        working-directory: ${{ github.workspace }}/python
+        run: |
+          uv sync
+          echo "VOCALBOARD_PYTHON=${{ github.workspace }}/python/.venv/bin/python" >> $GITHUB_ENV
+
+      - name: cargo test
+        run: cargo test --workspace
+        env:
+          SKIP_SIDECAR_TESTS: ${{ runner.os != 'Linux' && '1' || '' }}
+
+      - name: Check generated TypeScript bindings are up to date (Linux only)
+        if: runner.os == 'Linux'
+        run: git diff --exit-code -- src/lib/ipc/types.ts
+        working-directory: ${{ github.workspace }}
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo deny
+        run: cargo deny check
+
+
+  # ── Python ───────────────────────────────────────────────────────────────────
+  python-tests:
+    name: Python (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    defaults:
+      run:
+        working-directory: python
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+          enable-cache: true
+
+      - name: Install sidecar deps
+        run: uv sync
+
+      - name: pytest
+        run: uv run pytest
+
+      - name: pip-audit
+        run: uv run --with pip-audit pip-audit
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend-tests:
+    name: Frontend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm check
+
+      - run: pnpm lint
+
+      - run: pnpm test
+
+      - run: pnpm build

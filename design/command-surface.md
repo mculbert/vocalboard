@@ -476,3 +476,5 @@ Returns the current (in-memory) task queue. Read-only; not journaled.
 | `export_unsupported_format` | File extension not recognized |
 | `cancelled` | Task was cancelled by user |
 | `sidecar_not_ready` | Python sidecar did not start within timeout |
+| `unknown_command` | Command name not recognized by the sidecar / unsupported message type |
+| `internal_error` | Unhandled error inside a sidecar handler |
