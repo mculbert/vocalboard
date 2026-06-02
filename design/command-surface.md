@@ -17,6 +17,23 @@ The command surface is the **only** way the frontend (or a future plugin) mutate
 
 Applying a command produces zero or more timeline deltas (`InsertAfter` / `UpdateAfter` / `DeleteAfter`) and/or a metadata change. These are written as one `type = 0` row (plus, if metadata changed, one `type = -1` row), each tagged with the command-type `command_id` code; the undoable unit is the in-memory undo-stack entry that bundles them, not a journal grouping key.
 
+### Tauri command boundary — versioning mechanism (H1)
+
+Tauri commands are versioned **by command name**, not by an in-band `version` field. A breaking param/result change ships as a **new command name** (e.g. a future `new_project` v2 becomes a distinct `#[tauri::command]` registered alongside the retained v1). The old command is kept registered so that any Phase-6 plugin that pinned the old name continues to work. This table records the current version per name.
+
+This is the correct asymmetry with the **sidecar** envelope's in-band `version` field: the sidecar is a separately-built Nuitka process that can mismatch the Tauri shell at runtime, so it needs runtime version negotiation. The Tauri boundary does not — the webview assets are bundled with the Rust shell and always ship together.
+
+Both boundaries are governed by H1's no-in-place-change rule; only the *mechanism* differs.
+
+### Tauri command boundary — param validation (J2)
+
+For Tauri commands, J2 ("validate before mutation") is enforced in two layers:
+
+1. **Structural validation:** every command param struct carries `#[serde(deny_unknown_fields)]`. Tauri deserializes the JSON payload into the typed struct *before* the handler body runs, rejecting malformed JSON, type mismatches, missing required fields, and unknown fields — i.e. before any state mutation.
+2. **Value-constraint guards:** constraints the type system cannot express (e.g. `sample_rate >= 8000`) are explicit checks at the top of the handler, returning `CommandError { code: InvalidParams, … }` before touching any state.
+
+The prose schemas below document the constraints; the typed Rust structs are the runtime enforcement. Generating Draft-07 schemas from the Rust types (`schemars`) to make prose and code a single source of truth is deferred to M4/M5+ (see below).
+
 Progress event shape (for ML commands dispatched to Python):
 ```json
 { "request_id": "...", "type": "progress", "step": "<step_name>", "step_index": 1, "step_count": 4, "pct": 42, "label": "Transcribing…" }
@@ -54,6 +71,8 @@ Opens an existing project sqlite file, loads the latest snapshot, and applies th
 { "type": "object", "required": ["path"], "properties": { "path": { "type": "string" } } }
 ```
 **Source:** `frontend`
+
+> **Forward note (M6):** v1 runs any pending schema migrations automatically. Migration is one-way (the file becomes unreadable to older app versions), so M6 introduces a user-consent step: either an added `mode` param (`migrate` | `read_only` | `probe`) — handled compatibly under H1 — or a paired `probe_project` command that returns `(user_version, target_user_version, needs_migration)` without mutating, with `open_project` gaining a `mode` to commit to one of the paths. The engine also grows a read-only mode that refuses every state-mutating command for the session. See [data-model.md § Schema version](data-model.md#schema-version) and [phase1.md § M6](phase1.md#m6--frontend-scaffolds-against-mocked-commands-from-m0-matures-alongside-m4m5).
 
 ---
 
@@ -478,3 +497,14 @@ Returns the current (in-memory) task queue. Read-only; not journaled.
 | `sidecar_not_ready` | Python sidecar did not start within timeout |
 | `unknown_command` | Command name not recognized by the sidecar / unsupported message type |
 | `internal_error` | Unhandled error inside a sidecar handler |
+| `project_file_exists` | A project file already exists at the requested creation path (`new_project`) |
+| `project_file_not_found` | No project file found at the requested path (`open_project`) |
+| `project_open_failed` | Project file could not be opened — corrupt journal, schema mismatch, or recovery failure (`open_project`) |
+| `no_project_open` | A project command was issued but no project is currently open (`save_snapshot_now`) |
+| `invalid_params` | One or more command parameters failed a value-constraint check |
+
+---
+
+## Deferred: generate command schemas from Rust types (M4/M5+)
+
+The prose schemas above (Draft-07 JSON blocks) are the current source of truth. A future step (`schemars`) will generate them from the Rust param types so prose and code cannot diverge, and will expose the schemas for Phase-6 plugin introspection. This is a cross-command build-out deferred to M4/M5+ — M1 keeps prose schemas authoritative and typed Rust structs as the runtime contract.

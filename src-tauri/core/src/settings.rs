@@ -24,6 +24,9 @@ pub const DEFAULT_SNAPSHOT_IDLE_SECONDS: u64 = 30;
 /// Default seconds of model inactivity before the sidecar unloads it.
 pub const DEFAULT_MODEL_IDLE_UNLOAD_SECONDS: u64 = 300;
 
+/// Default maximum number of undoable edits retained in memory.
+pub const DEFAULT_UNDO_HISTORY_LIMIT: usize = 50;
+
 /// Sinc-resampler quality preset (maps to rubato interpolation parameters).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -96,6 +99,9 @@ pub struct Settings {
     /// Auto-update feed URL; `None` until Phase 6 enables auto-update.
     #[serde(default)]
     pub update_feed_url: Option<String>,
+    /// Maximum number of undoable edits retained in memory (oldest evicted past this).
+    #[serde(default = "default_undo_history_limit")]
+    pub undo_history_limit: usize,
     /// Paths to recently-opened project files, most-recent first.
     #[serde(default)]
     pub recent_projects: Vec<PathBuf>,
@@ -113,6 +119,9 @@ fn default_snapshot_idle_seconds() -> u64 {
 fn default_model_idle_unload_seconds() -> u64 {
     DEFAULT_MODEL_IDLE_UNLOAD_SECONDS
 }
+fn default_undo_history_limit() -> usize {
+    DEFAULT_UNDO_HISTORY_LIMIT
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -127,6 +136,7 @@ impl Default for Settings {
             snapshot_idle_seconds: DEFAULT_SNAPSHOT_IDLE_SECONDS,
             model_idle_unload_seconds: DEFAULT_MODEL_IDLE_UNLOAD_SECONDS,
             update_feed_url: None,
+            undo_history_limit: DEFAULT_UNDO_HISTORY_LIMIT,
             recent_projects: vec![],
         }
     }
@@ -195,5 +205,62 @@ fn apply_migration(value: serde_json::Value, from_version: u32) -> Result<serde_
         // shipped without its migration step — fail loudly rather than spin forever
         // (the arm must bump the version, or `migrate`'s loop never terminates).
         _ => bail!("no migration path from settings version {from_version}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_of_reads_version_field() {
+        assert_eq!(version_of(&serde_json::json!({"version": 3})), 3);
+        assert_eq!(version_of(&serde_json::json!({})), 0);
+        assert_eq!(version_of(&serde_json::json!({"version": null})), 0);
+    }
+
+    #[test]
+    fn apply_migration_v0_stamps_current_version() {
+        let v0 = serde_json::json!({"gpu_enabled": true});
+        let result = apply_migration(v0, 0).unwrap();
+        assert_eq!(version_of(&result), CURRENT_VERSION);
+        assert_eq!(result["gpu_enabled"], true);
+    }
+
+    #[test]
+    fn apply_migration_v0_non_object_starts_fresh() {
+        let result = apply_migration(serde_json::Value::Null, 0).unwrap();
+        assert_eq!(version_of(&result), CURRENT_VERSION);
+    }
+
+    #[test]
+    fn apply_migration_unknown_version_errors() {
+        let err = apply_migration(serde_json::json!({}), 99).unwrap_err();
+        assert!(err.to_string().contains("99"), "error: {err}");
+    }
+
+    #[test]
+    fn serde_defaults_applied_when_fields_absent() {
+        let raw = serde_json::json!({"version": 1});
+        let s: Settings = serde_json::from_value(raw).unwrap();
+        assert!((s.speaker_merge_threshold - DEFAULT_SPEAKER_MERGE_THRESHOLD).abs() < f64::EPSILON);
+        assert_eq!(s.snapshot_idle_seconds, DEFAULT_SNAPSHOT_IDLE_SECONDS);
+        assert_eq!(
+            s.model_idle_unload_seconds,
+            DEFAULT_MODEL_IDLE_UNLOAD_SECONDS
+        );
+    }
+
+    #[test]
+    fn to_json_serializes_fields() {
+        let s = Settings {
+            default_sample_rate: 44100,
+            gpu_enabled: true,
+            ..Settings::default()
+        };
+        let json = s.to_json().unwrap();
+        assert_eq!(json["default_sample_rate"], 44100);
+        assert_eq!(json["gpu_enabled"], true);
+        assert_eq!(json["version"], CURRENT_VERSION);
     }
 }

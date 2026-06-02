@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import * as m from '$lib/i18n/messages.js';
 	import { getAppInfo, pingSidecar } from '$lib/ipc/commands.js';
+	import type { AppInfoResult } from '$lib/ipc/types';
 
 	let appInfo = $state<AppInfoResult | null>(null);
 	let pong = $state<boolean | null>(null);

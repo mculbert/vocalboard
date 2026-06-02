@@ -36,6 +36,11 @@ docs/content/internals/api/frontend/*
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
 
+# Antigravity local settings
+.agents/
+.antigravitycli/
+GEMINI.md
+
 # OS / editor
 *~
 .DS_Store

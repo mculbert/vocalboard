@@ -8,7 +8,8 @@
 //! structured logging.  All project state and business logic live in the
 //! `core` crate; IPC contract types live in `proto`.
 
-use std::sync::Arc;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use tauri::Manager as _;
@@ -16,13 +17,46 @@ use tauri::Manager as _;
 /// Holds the sidecar manager once it has started, or `None` if startup failed.
 struct SidecarState(Option<Arc<vb_core::SidecarManager>>);
 
+/// App-global slot holding the single open project (Phase 1: one window ⇒ one project).
+///
+/// `Option` is `None` when no project is open. Replaced (old project dropped) on each
+/// `new_project` or `open_project` call. The `Arc` is cloned into `spawn_blocking`
+/// closures so the guard is never held across an `.await`.
+struct ProjectSlot(Arc<Mutex<Option<vb_core::project::engine::ProjectState>>>);
+
+/// Maps an [`EngineError`](vb_core::project::engine::EngineError) to a typed
+/// [`CommandError`](proto::CommandError) for the frontend.
+fn to_command_error(e: vb_core::project::engine::EngineError) -> proto::CommandError {
+    use vb_core::project::engine::EngineError;
+    let code = match &e {
+        EngineError::ProjectFileExists { .. } => proto::ErrorCode::ProjectFileExists,
+        EngineError::ProjectFileNotFound { .. } => proto::ErrorCode::ProjectFileNotFound,
+        EngineError::RecoveryFailed(_) | EngineError::OpenDb(_) => {
+            proto::ErrorCode::ProjectOpenFailed
+        }
+        _ => proto::ErrorCode::InternalError,
+    };
+    proto::CommandError {
+        code,
+        message: e.to_string(),
+    }
+}
+
+/// Constructs a [`CommandError`](proto::CommandError) from a code and message.
+fn err(code: proto::ErrorCode, message: impl Into<String>) -> proto::CommandError {
+    proto::CommandError {
+        code,
+        message: message.into(),
+    }
+}
+
 /// Returns application version and sidecar lifecycle status.
 ///
 /// Used by the frontend as a smoke test on startup.
 #[tauri::command]
 async fn get_app_info(
     state: tauri::State<'_, SidecarState>,
-) -> Result<proto::AppInfoResult, String> {
+) -> Result<proto::AppInfoResult, proto::CommandError> {
     let mgr: Option<Arc<vb_core::SidecarManager>> = state.0.clone();
     let sidecar_status = match mgr {
         Some(m) => m.status().await,
@@ -36,14 +70,128 @@ async fn get_app_info(
 
 /// Sends a `ping` to the Python sidecar and returns `{pong: true}`.
 ///
-/// Returns an error string if the sidecar is unavailable.
+/// Returns `SidecarNotReady` if the sidecar is unavailable or does not respond.
 #[tauri::command]
-async fn ping_sidecar(state: tauri::State<'_, SidecarState>) -> Result<proto::PingResult, String> {
-    let mgr = state
-        .0
-        .clone()
-        .ok_or_else(|| "sidecar not available".to_string())?;
-    mgr.ping().await.map_err(|e| e.to_string())
+async fn ping_sidecar(
+    state: tauri::State<'_, SidecarState>,
+) -> Result<proto::PingResult, proto::CommandError> {
+    let mgr = state.0.clone().ok_or_else(|| proto::CommandError {
+        code: proto::ErrorCode::SidecarNotReady,
+        message: "sidecar not available".to_string(),
+    })?;
+    mgr.ping().await.map_err(|e| proto::CommandError {
+        code: proto::ErrorCode::SidecarNotReady,
+        message: e.to_string(),
+    })
+}
+
+/// Creates a new empty project at `params.path` locked to `params.sample_rate`.
+///
+/// Replaces any currently open project in the slot. Returns
+/// `InvalidParams` if `sample_rate < 8000`, `ProjectFileExists` if a file
+/// already exists at the path.
+#[tauri::command]
+async fn new_project(
+    params: proto::NewProjectParams,
+    slot: tauri::State<'_, ProjectSlot>,
+    settings: tauri::State<'_, vb_core::settings::Settings>,
+) -> Result<proto::NewProjectResult, proto::CommandError> {
+    if params.sample_rate < 8000 {
+        return Err(err(
+            proto::ErrorCode::InvalidParams,
+            "sample_rate must be >= 8000",
+        ));
+    }
+    let slot = slot.0.clone();
+    let settings = settings.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let ps = vb_core::project::engine::ProjectState::new_project(
+            Path::new(&params.path),
+            params.sample_rate,
+            &settings,
+        )
+        .map_err(to_command_error)?;
+        let sample_rate = ps.sample_rate();
+        *slot
+            .lock()
+            .map_err(|_| err(proto::ErrorCode::InternalError, "project slot poisoned"))? = Some(ps);
+        Ok(proto::NewProjectResult { sample_rate })
+    })
+    .await
+    .map_err(|e| {
+        err(
+            proto::ErrorCode::InternalError,
+            format!("worker join error: {e}"),
+        )
+    })?
+}
+
+/// Opens an existing project at `params.path`.
+///
+/// Replaces any currently open project. Returns `ProjectFileNotFound` if the path
+/// does not exist, `ProjectOpenFailed` for unrecoverable open errors. The result
+/// carries missing-track ids and, when `recovery` is `Some`, a corrupt-journal
+/// rollback warning — the frontend **must** surface this to the user (M6 dialog).
+#[tauri::command]
+async fn open_project(
+    params: proto::OpenProjectParams,
+    slot: tauri::State<'_, ProjectSlot>,
+    settings: tauri::State<'_, vb_core::settings::Settings>,
+) -> Result<proto::OpenProjectResult, proto::CommandError> {
+    let slot = slot.0.clone();
+    let settings = settings.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let (ps, outcome) = vb_core::project::engine::ProjectState::open_project(
+            Path::new(&params.path),
+            &settings,
+        )
+        .map_err(to_command_error)?;
+        let result = proto::OpenProjectResult {
+            missing_tracks: outcome.missing_tracks,
+            recovery: outcome.recovery.map(|r| proto::RecoveryReport {
+                failed_row: r.failed_row,
+                snapshot_id: r.snapshot_id,
+            }),
+        };
+        *slot
+            .lock()
+            .map_err(|_| err(proto::ErrorCode::InternalError, "project slot poisoned"))? = Some(ps);
+        Ok(result)
+    })
+    .await
+    .map_err(|e| {
+        err(
+            proto::ErrorCode::InternalError,
+            format!("worker join error: {e}"),
+        )
+    })?
+}
+
+/// Writes the current project state as a new snapshot immediately.
+///
+/// Returns `NoProjectOpen` if no project is currently loaded.
+#[tauri::command]
+async fn save_snapshot_now(
+    _params: proto::SaveSnapshotNowParams,
+    slot: tauri::State<'_, ProjectSlot>,
+) -> Result<(), proto::CommandError> {
+    let slot = slot.0.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = slot
+            .lock()
+            .map_err(|_| err(proto::ErrorCode::InternalError, "project slot poisoned"))?;
+        let ps = guard
+            .as_mut()
+            .ok_or_else(|| err(proto::ErrorCode::NoProjectOpen, "no project open"))?;
+        ps.save_snapshot_now().map_err(to_command_error)
+    })
+    .await
+    .map_err(|e| {
+        err(
+            proto::ErrorCode::InternalError,
+            format!("worker join error: {e}"),
+        )
+    })?
 }
 
 /// Load app settings from `tauri-plugin-store`, apply any pending migrations,
@@ -122,13 +270,20 @@ fn main() -> tauri::Result<()> {
             };
 
             app.manage(SidecarState(sidecar));
+            app.manage(ProjectSlot(Arc::new(Mutex::new(None))));
 
             let settings = init_settings(app)?;
             app.manage(settings);
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_app_info, ping_sidecar])
+        .invoke_handler(tauri::generate_handler![
+            get_app_info,
+            ping_sidecar,
+            new_project,
+            open_project,
+            save_snapshot_now
+        ])
         .run(tauri::generate_context!())
 }
 

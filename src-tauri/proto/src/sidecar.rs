@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::ErrorCode;
+use crate::error::CommandError;
 
 /// A message received from the Python sidecar over stdout.
 ///
@@ -15,7 +15,7 @@ use crate::error::ErrorCode;
 /// {"type":"error","request_id":"…","code":"cancelled","message":"…"}
 /// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum FromSidecar {
     /// Typed startup signal emitted once the sidecar is ready to accept requests.
@@ -32,7 +32,7 @@ pub enum FromSidecar {
 
 /// A progress update from the Python sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 pub struct ProgressMsg {
     /// UUIDv4 of the originating request.
     pub request_id: String,
@@ -50,7 +50,7 @@ pub struct ProgressMsg {
 
 /// Severity level for a sidecar log message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     /// Verbose diagnostic information.
@@ -65,7 +65,7 @@ pub enum LogLevel {
 
 /// A structured log line emitted by the Python sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 pub struct LogMsg {
     /// UUIDv4 of the originating request, or `null` for process-level messages.
     pub request_id: Option<String>,
@@ -77,23 +77,22 @@ pub struct LogMsg {
 
 /// A successful result from the Python sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 pub struct ResultMsg {
     /// UUIDv4 of the originating request.
     pub request_id: String,
     /// Command-specific result payload.
-    #[cfg_attr(test, ts(type = "unknown"))]
+    #[cfg_attr(feature = "ts-export", ts(type = "unknown"))]
     pub payload: serde_json::Value,
 }
 
 /// An error response from the Python sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-export", derive(ts_rs::TS))]
 pub struct ErrorMsg {
     /// UUIDv4 of the originating request, or `null` for process-level errors.
     pub request_id: Option<String>,
-    /// Machine-readable error code.
-    pub code: ErrorCode,
-    /// Human-readable error description (not shown directly in the UI; used for logging).
-    pub message: String,
+    /// Error code and human-readable message (flattened to `{code, message}` on the wire).
+    #[serde(flatten)]
+    pub error: CommandError,
 }
