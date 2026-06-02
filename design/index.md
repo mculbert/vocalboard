@@ -27,6 +27,7 @@ Vocalboard is a cross-platform desktop audio editor built on Tauri 2 (Rust shell
 |------|------|----------------|
 | Phase 1 roadmap | [phase1.md](phase1.md) | Dependency-ordered build plan for Phase 1 (milestones M0–M7) |
 | M0 action plan | [phase1-m0.md](phase1-m0.md) | Step-by-step scaffolding & contracts plan for the M0 milestone |
+| M1 action plan | [phase1-m1.md](phase1-m1.md) | Step-by-step persistence & timeline engine plan for the M1 milestone |
 
 ## Key architectural decisions
 
@@ -83,7 +84,7 @@ Vocalboard is a cross-platform desktop audio editor built on Tauri 2 (Rust shell
 
 **locus** — A cursor position. May be a word, a track-start marker, or (conceptually) the boundary between two elements. Not a range.
 
-**persistent turn ID** — A stable integer assigned to a turn at creation (from `project_meta.next_turn_id`) and unchanged across edits. It is part of the turn's hashed payload, so it disambiguates turns with identical data at different timeline points and keeps turn hashes unique within a track. The cursor and command params refer to a turn by this ID. See [data-model.md § Turn payload](data-model.md#turn-payload-the-unit-stored-in-the-blob-store).
+**persistent turn ID** — A stable integer assigned to a turn at creation (from `project.next_turn_id`) and unchanged across edits. It is part of the turn's hashed payload, so it disambiguates turns with identical data at different timeline points and keeps turn hashes unique within a track. The cursor and command params refer to a turn by this ID. See [data-model.md § Turn payload](data-model.md#turn-payload-the-unit-stored-in-the-blob-store).
 
 **project sample rate** — The integer sample rate (default 48 kHz; any integer allowed) at which all audio in the project is represented. Set at project creation; locked thereafter. All source audio is resampled to a per-track cache at import.
 

@@ -127,7 +127,7 @@ App start
   │
   ├─ Show welcome screen  ──────────► New project flow
   │                                       │
-  │                                       └─ Open SQLite, write project_meta
+  │                                       └─ Open SQLite, write project row
   │
   └──────────────────────────────────► Open project flow
                                            │

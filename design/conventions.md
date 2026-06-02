@@ -35,6 +35,15 @@ that read differently per language say so explicitly.
   integration / e2e) — that fails before the fix and passes after. If a bug genuinely cannot be
   captured by an automated test (a race, a platform-specific defect, a purely visual glitch), the
   PR MUST say why.
+- **A3 [review].** Test *effectiveness* (not just path coverage) is spot-checked with mutation
+  testing (`cargo-mutants`) at milestone boundaries — **not** per-PR, since runs are slow and
+  timeout-flaky. Invocation from `src-tauri/`:
+  ```bash
+  cargo mutants --workspace          # full sweep
+  cargo mutants -f path/to/file.rs   # focused pass on changed files
+  ```
+  Surviving mutants MUST be triaged to zero or annotated with why they are acceptable (e.g.
+  genuinely equivalent mutants). This is a periodic [review] gate, not a CI blocker.
 
 ## B. Code quality
 
@@ -79,8 +88,13 @@ that read differently per language say so explicitly.
 - **E2 [CI + review].** Every public interface MUST carry a doc-comment with a summary and an
   explicit input/output **contract**. (The contract describes *what it does and how to use it* —
   distinct from E1's inline *why*.) Rust `pub` items at crate boundaries are gated by
-  `#![warn(missing_docs)]` **[CI]**. Note: this lint is in force from M0, even though *rendering*
-  the API site (rustdoc-JSON / pydoc-markdown / typedoc → Hugo) is deferred to M7 per
+  `#![warn(missing_docs)]` **[CI]**, and intra-doc links in those contracts are gated against
+  silent breakage by `cargo doc` under `RUSTDOCFLAGS=-D rustdoc::broken_intra_doc_links` **[CI]**
+  (a `[`Type`]` link that fails to resolve renders as plain text — a doc bug). Only the
+  broken-link lint is denied; `private_intra_doc_links` and `redundant_explicit_links` stay at
+  warn, since for an internal workspace `pub → pub(crate)` doc links are intentional. Note: these
+  lints are in force from M0, even though *rendering* the API site (rustdoc-JSON / pydoc-markdown /
+  typedoc → Hugo) is deferred to M7 per
   [ops.md § Internal API documentation](ops.md#internal-api-documentation).
 - **E3 [review].** User-facing documentation: every new user-visible feature MUST be documented in
   the Hugo `docs/content/reference/` manual. The development-branch copy describes *planned*
@@ -101,13 +115,17 @@ in this document.
 ## G. Data & persistence integrity
 
 - **G1 [CI + review].** Any change to a persisted format — the SQLite schema, the blob format-tag
-  byte, the snapshot/Bincode encoding, or `settings.json` — MUST ship a migration (a
+  byte, the snapshot/postcard encoding, or `settings.json` — MUST ship a migration (a
   `PRAGMA user_version` upgrade function, or a settings-version upgrade function) **and** a
   round-trip test that opens a fixture written by the previous format and verifies it loads.
   Rationale: for a local-first editor, a format change without a migration is silent user **data
   loss**. Unknown `settings.json` keys MUST be preserved (forward-compat — already in the schema).
   Enforced by a fixtures-based round-trip suite **[CI]**; a reviewer confirms a migration
-  accompanies any format-touching PR **[review]**.
+  accompanies any format-touching PR **[review]**. Committed binary fixtures are regenerated after a
+  pre-1.0 in-place format revision with the `#[ignore]`d helper (from `src-tauri/`):
+  ```bash
+  cargo test -p core --lib -- --ignored gen_fixture --nocapture
+  ```
 - **G2 [review].** `min_app_version` MUST be raised whenever a project file becomes unreadable by
   older app versions, so an old app refuses an incompatible project cleanly instead of corrupting
   it.
@@ -120,10 +138,17 @@ in this document.
   and plugins call the same command surface, so silent schema drift breaks downstream callers. See
   [command-surface.md](command-surface.md).
 
+  **Tauri command boundary:** versioning is by *command name* — a breaking change ships a new
+  `#[tauri::command]` (the old name stays registered). No in-band `version` field on Tauri commands:
+  the webview and Rust shell ship together so there is no runtime skew to negotiate. This differs
+  from the **sidecar** NDJSON envelope, which carries an in-band `version` because the sidecar is a
+  separately-built Nuitka process. Both boundaries are governed by H1's no-in-place-change rule.
+
 ## I. Dependency & supply-chain hygiene
 
 - **I1 [CI].** Rust: `cargo audit` (CVE advisories) and `cargo deny` (license + ban policy) run in
-  CI. Python: `pip-audit` runs in CI. Rationale: the app redistributes large native dependencies
+  CI. Python: `pip-audit` runs in CI. Frontend: `pnpm audit` (`--audit-level high`) runs in CI.
+  Rationale: the app redistributes large native dependencies
   (torch, ffmpeg, whisperx, pyannote); CVEs and incompatible licenses are a real risk for an OSS
   download.
 - **I2 [review].** A new dependency is justified in the PR (size, license, maintenance status).
@@ -138,6 +163,12 @@ in this document.
   Draft-07 JSON schema **before** any state mutation (already designed — codified here). This
   reinforces the invariant that the command surface is the only way the frontend mutates state, and
   that no raw scripts run from the webview.
+
+  **Tauri command boundary enforcement:** (1) every param struct carries `#[serde(deny_unknown_fields)]`
+  so Tauri's deserialization rejects malformed JSON, type mismatches, missing required fields, and
+  unknown fields before the handler body runs; (2) value constraints the type system cannot express
+  (e.g. `sample_rate >= 8000`) are explicit guards at the top of the handler returning
+  `CommandError { code: InvalidParams }` before any state mutation.
 
 ## K. Privacy / local-first guarantee
 
@@ -174,7 +205,7 @@ in this document.
 |---|---|
 | `cargo fmt --check` | Function purpose / decomposition (B1) |
 | `cargo clippy -- -D warnings`, incl. `unwrap_used` / `expect_used` / `panic` / `cognitive_complexity` / `too_many_lines` (B1, C1) | Naming quality (B2), named constants (B3) |
-| `#![warn(missing_docs)]` on crate boundaries (E2) | Comment intent — why-not-what (E1) |
+| `#![warn(missing_docs)]` on crate boundaries + `cargo doc -D rustdoc::broken_intra_doc_links` (E2) | Comment intent — why-not-what (E1) |
 | `cargo test --workspace`, incl. format round-trip fixtures (A1, G1) | Public-interface contract prose (E2) |
 | `pytest python/tests/` (A1) | Python / frontend error tagging (C2, C3) |
 | `pnpm check` with a11y warnings as errors (D1) | User-facing doc coverage & accuracy (E3) |

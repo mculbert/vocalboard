@@ -5,8 +5,9 @@ editing — podcasters, audiobooks, voiceover. Runs entirely locally. Tauri 2 (R
 shell) + Svelte 5 webview + a long-running Python ML sidecar.
 
 ## Status
-Design complete; pre-implementation. The source tree is not yet scaffolded —
-**M0 (scaffolding & contracts) is next** (`design/phase1-m0.md`).
+**M0 (scaffolding & contracts) complete** — the three-crate Rust workspace, IPC
+contract, sidecar round-trip, settings, and CI skeleton are in place. **M1 (core
+persistence & timeline engine) is next** (`design/phase1-m1.md`).
 
 ## Source of truth
 - **`design/` is authoritative.** Start at `design/index.md`; per-area docs cover
@@ -30,7 +31,7 @@ Design complete; pre-implementation. The source tree is not yet scaffolded —
   The frontend never names ML models; Rust resolves them from settings `model_paths`.
 - **Persistence = content-addressed blob store + append-only journal (3 SQLite tables)**
   with periodic snapshots; immutable `Arc` timeline tree with structural sharing. Blobs
-  are Bincode + BLAKE3-128 with a format-tag byte; hashed structs use ordered
+  are postcard + BLAKE3-128 with a format-tag byte; hashed structs use ordered
   collections only (`Vec`/`BTreeMap`, never `HashMap`) for deterministic serialization.
 - **Any persisted-format change ships a migration + a round-trip test.** Touching the SQLite
   schema, blob format-tag byte, snapshot encoding, or `settings.json` requires a migration
@@ -68,13 +69,24 @@ Design complete; pre-implementation. The source tree is not yet scaffolded —
 
 ## Workflow
 - Ignore `notes/` unless explicitly referenced.
+- **No direct commits on `main`.** Changes reach `main` only through a GitHub PR (squash-merged
+  on GitHub); never `git commit` on a local `main`.
 - **GPG signing by branch type:**
   - `claude/*` working branches: commits are NOT signed — always use `--no-gpg-sign`.
-  - `main` and all other development branches: commits ARE signed — never bypass with
-    `--no-gpg-sign`. If signing fails, the gpg-agent may need unlocking — ask.
-- **Merges from `claude/*` to main or any development branch are squash merges** unless
-  otherwise specified.
-- Don't push unless asked.
+  - All other development branches: commits ARE signed — never bypass with `--no-gpg-sign`. If
+    signing fails, the gpg-agent may need unlocking — ask. (`main` is not committed to locally;
+    see above.)
+- **Never amend commits** unless explicitly asked — make a *new* commit for changes to prior work.
+- **Never bypass git hooks.** The repo has live `pre-commit` and `pre-push` hooks; do not use
+  `--no-verify` (or equivalent). Note `--no-gpg-sign` on `claude/*` is a signing flag, not a hook
+  bypass, and is still required there.
+- **Promoting `claude/*` work to `main`:** squash-merge the `claude/*` branch locally onto a
+  **new feature branch** (squash unless otherwise specified), push that feature branch to `origin`
+  (`vocalboard`), and open a PR there; GitHub squash-merges the PR to `main`, after which you
+  `git pull` to refresh local `main`. Do NOT delete or prune the `claude/*` branch — it lives on
+  the `history` remote (`vocalboard-dev`) to keep the historical record.
+- **Push only when asked.** When you do push: `claude/*` branches go to the `history` remote
+  (`vocalboard-dev`); all other branches (incl. feature branches) go to `origin` (`vocalboard`).
 - **Pre-commit checklist:** before running `git commit`, confirm: (1) if this diff
   leaves any shortcut, stub, or deferred item, the relevant `design/phase*.md` is
   also staged with the downstream milestone updated.

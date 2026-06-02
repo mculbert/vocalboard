@@ -85,6 +85,29 @@ fn migrate_is_idempotent_for_current_version() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A settings JSON missing `undo_history_limit` deserializes to the default (50).
+#[test]
+fn undo_history_limit_defaults_to_50() -> anyhow::Result<()> {
+    let raw = serde_json::json!({"version": 1});
+    let s = Settings::from_json(&raw)?;
+    assert_eq!(s.undo_history_limit, settings::DEFAULT_UNDO_HISTORY_LIMIT);
+    assert_eq!(s.undo_history_limit, 50);
+    Ok(())
+}
+
+/// A non-default `undo_history_limit` survives a serialize → deserialize round-trip.
+#[test]
+fn undo_history_limit_roundtrips() -> anyhow::Result<()> {
+    let s = Settings {
+        undo_history_limit: 10,
+        ..Settings::default()
+    };
+    let json = s.to_json()?;
+    let reloaded = Settings::from_json(&json)?;
+    assert_eq!(reloaded.undo_history_limit, 10);
+    Ok(())
+}
+
 /// Unknown keys in the JSON (from a newer app version) do not prevent loading.
 #[test]
 fn unknown_keys_do_not_prevent_load() -> anyhow::Result<()> {

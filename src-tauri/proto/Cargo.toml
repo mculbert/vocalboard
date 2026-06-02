@@ -10,6 +10,13 @@ workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ts-rs = { version = "10", features = ["serde-compat"], optional = true }
+anyhow = { version = "1", optional = true }
 
-[dev-dependencies]
-ts-rs = { version = "10", features = ["serde-compat"] }
+[features]
+ts-export = ["dep:ts-rs", "dep:anyhow"]
+
+[[bin]]
+name = "gen_bindings"
+path = "src/bin/gen_bindings.rs"
+required-features = ["ts-export"]

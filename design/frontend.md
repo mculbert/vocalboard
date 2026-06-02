@@ -248,3 +248,16 @@ Paraglide-js v2 compiles `messages/en.json` (project root) into JavaScript funct
 1. Add the key to `messages/en.json`
 2. Run `pnpm paraglide:compile` (the Vite dev server recompiles automatically)
 3. Use the typed function: `import * as m from '$lib/i18n/messages.js'; m.my_new_key()`
+
+## Settings dialog — carried-forward requirements
+
+These are behavioural requirements for the settings/preferences dialog (the dialog itself
+lands in M3). They are recorded here so they are not lost before the UI is built.
+
+- ⚠️ **Undo-limit zero warning.** `undo_history_limit == 0` is a valid setting that *disables
+  undo entirely* — no undo/redo; reversions must be made manually or, later, via the Time
+  Machine feature. When the user enters `0`, the dialog **must trigger a warning/confirmation**
+  so they explicitly acknowledge undo will be off — never accept `0` silently. The backend
+  accepts `0` without objection (the engine's in-memory `History` simply skips recording), so
+  this gate is frontend-only. See [data-model.md § Undo / redo](data-model.md#undo--redo) and
+  [phase1-m1-11.md § Undo limit = 0](phase1-m1-11.md).

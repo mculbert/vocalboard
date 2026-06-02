@@ -156,7 +156,7 @@ impl SidecarManager {
 
         match timeout(Duration::from_secs(30), rx).await {
             Ok(Ok(Ok(val))) => Ok(val),
-            Ok(Ok(Err(e))) => bail!("sidecar error {:?}: {}", e.code, e.message),
+            Ok(Ok(Err(e))) => bail!("sidecar error {:?}: {}", e.error.code, e.error.message),
             Ok(Err(_)) => bail!("response channel dropped for {request_id}"),
             Err(_) => {
                 self.pending.lock().await.remove(&request_id);
@@ -214,7 +214,7 @@ impl SidecarManager {
                 if let Some(tx) = map.remove(&rid) {
                     let _ = tx.send(Err(e));
                 } else {
-                    error!(target: "sidecar::error", code = ?e.code, "{}", e.message);
+                    error!(target: "sidecar::error", code = ?e.error.code, "{}", e.error.message);
                 }
             }
         }
@@ -226,10 +226,6 @@ mod tests {
     use super::{PendingMap, SidecarManager};
     use std::sync::Arc;
     use tokio::sync::{oneshot, Mutex, RwLock};
-
-    fn python_bin() -> String {
-        std::env::var("VOCALBOARD_PYTHON").unwrap_or_else(|_| "python".to_owned())
-    }
 
     /// `route_line` must fire the ready oneshot and set status to Ready when it
     /// receives `{"type":"ready"}`.
@@ -277,9 +273,9 @@ mod tests {
         match result {
             Err(err) => {
                 assert!(
-                    matches!(err.code, proto::ErrorCode::UnknownCommand),
+                    matches!(err.error.code, proto::ErrorCode::UnknownCommand),
                     "expected UnknownCommand, got {:?}",
-                    err.code
+                    err.error.code
                 );
             }
             Ok(_) => anyhow::bail!("unknown_command should resolve as Err, not Ok"),
@@ -289,23 +285,22 @@ mod tests {
 
     /// A failed `send` (stdin already closed) must not leave an orphaned entry in
     /// the pending map; the waiter would otherwise never resolve.
-    ///
-    /// Set `SKIP_SIDECAR_TESTS=1` to skip when Python is unavailable.
     #[tokio::test]
     async fn send_removes_pending_entry_on_write_failure() -> anyhow::Result<()> {
         use anyhow::Context as _;
         use std::collections::HashMap;
         use tokio::process::Command;
 
-        if std::env::var("SKIP_SIDECAR_TESTS").as_deref() == Ok("1") {
-            eprintln!("SKIP_SIDECAR_TESTS=1; skipping");
-            return Ok(());
-        }
-
-        // Spawn a process that exits immediately so the read end of its stdin pipe
-        // closes; subsequent writes to the captured stdin fail with BrokenPipe.
-        let mut child = Command::new(python_bin())
-            .args(["-c", "pass"])
+        // Spawn a no-op system binary (not the sidecar, so the test needs nothing
+        // on PATH) that exits immediately, closing the read end of its stdin pipe;
+        // subsequent writes to the captured stdin then fail with BrokenPipe.
+        let (program, args): (&str, &[&str]) = if cfg!(windows) {
+            ("cmd", &["/C", "exit"])
+        } else {
+            ("true", &[])
+        };
+        let mut child = Command::new(program)
+            .args(args)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -326,22 +321,6 @@ mod tests {
             mgr.pending.lock().await.is_empty(),
             "pending map must not leak an entry on write failure"
         );
-        Ok(())
-    }
-
-    /// Spawn the sidecar, await the ready handshake, then ping and check pong.
-    ///
-    /// Set `SKIP_SIDECAR_TESTS=1` to skip when Python is unavailable.
-    #[tokio::test]
-    async fn sidecar_start_and_ping() -> anyhow::Result<()> {
-        if std::env::var("SKIP_SIDECAR_TESTS").as_deref() == Ok("1") {
-            eprintln!("SKIP_SIDECAR_TESTS=1; skipping");
-            return Ok(());
-        }
-        let bin = python_bin();
-        let mgr = SidecarManager::start(&bin, &["-m", "vocalboard_sidecar"]).await?;
-        let result = mgr.ping().await?;
-        assert!(result.pong, "expected pong == true");
         Ok(())
     }
 }

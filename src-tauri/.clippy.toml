@@ -1,0 +1,4 @@
+# Allow unwrap / expect / panic in test code — test failures are self-reporting panics.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
