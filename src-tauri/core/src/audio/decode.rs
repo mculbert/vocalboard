@@ -155,7 +155,7 @@ pub(crate) fn decode_next_packet(
 
 /// Read codec/rate/channel/length metadata without decoding all packets.
 ///
-/// Falls back to the ffmpeg subprocess on an unsupported-format rejection, mirroring [`decode`].
+/// Falls back to the ffmpeg subprocess on an unsupported-format rejection, mirroring [`open_source`].
 /// `length_frames` is best-effort; the authoritative count comes from a full decode at M4 import.
 pub fn probe(path: &Path) -> Result<AudioProbe, AudioError> {
     match probe_symphonia(path) {

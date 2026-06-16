@@ -36,6 +36,8 @@ fn find_splice_at(splices: &[Splice], offset: i64) -> (usize, i64) {
 /// The renderer reads [`MixSlice::length_samples`] frames starting at in-splice offset
 /// [`offset_in_splice`], applying the splice's fades anchored to the *original* splice
 /// edges — so a span beginning mid-fade resumes the ramp rather than restarting it.
+///
+/// [`offset_in_splice`]: Self::offset_in_splice
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdlSegment {
     /// Track this segment belongs to.

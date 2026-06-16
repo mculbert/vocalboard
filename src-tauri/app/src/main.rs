@@ -24,7 +24,7 @@ struct SidecarState(Option<Arc<vb_core::SidecarManager>>);
 /// closures so the guard is never held across an `.await`.
 struct ProjectSlot(Arc<Mutex<Option<vb_core::project::engine::ProjectState>>>);
 
-/// App-global slot holding the [`PlaybackEngine`] for the open project.
+/// App-global slot holding the [`PlaybackEngine`](vb_core::audio::playback::PlaybackEngine) for the open project.
 ///
 /// Parallel to [`ProjectSlot`]: the engine's `cpal` stream config and ring size both
 /// derive from the project's *locked* sample rate, so the engine is constructed when a
@@ -71,7 +71,7 @@ fn audio_to_command_error(e: vb_core::audio::AudioError) -> proto::CommandError 
 
 /// Project + settings data the audio handlers project out of the [`ProjectSlot`] under one lock.
 ///
-/// The handlers clone exactly what they need out of [`ProjectState`] (track metas, room tones, the
+/// The handlers clone exactly what they need out of [`ProjectState`](vb_core::project::engine::ProjectState) (track metas, room tones, the
 /// speech trees zipped with their `project_start_sample`, the `.vbdata` dir) plus the two derived
 /// render scalars (`max_fade_samples`, `project_end`), then drop the guard — keeping with the M2
 /// "no SQLite/`Db` on the audio path" invariant. `Renderer` + `CacheSourceProvider` are `'static`,
@@ -404,7 +404,7 @@ async fn save_snapshot_now(
 /// Starts playback over `[start_sample, end_sample)` of the open project. Version 1.
 ///
 /// Non-journaled (not a project mutation). Builds the same `CacheSourceProvider` + `Renderer` that
-/// export uses, then drives the [`PlaybackEngine`] in the slot with two
+/// export uses, then drives the [`PlaybackEngine`](vb_core::audio::playback::PlaybackEngine) in the slot with two
 /// `AppHandle`-capturing emit closures (they only `emit` — never re-enter the engine, see the
 /// `playback` module's deadlock-freedom note). Guards `start_sample >= 0` (J2). Returns
 /// `audio_io_error` when no audio device is open (empty playback slot).
