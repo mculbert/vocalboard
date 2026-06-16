@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Project pre-commit checks for Vocalboard.
+#
+# Fast, offline, deterministic gates mirroring the cheap half of CI
+# (.github/workflows/ci.yml). Slower suites (tests, builds, svelte-check,
+# doc-link lint) live in scripts/pre-push; network audits (cargo deny /
+# pip-audit / pnpm audit), the cross-OS matrix, and pnpm build stay CI-only.
+#
+# This script contains NO signing or branch policy — those are personal git
+# hook concerns, not project requirements. Wire them into your local hook.
+#
+# Checks STAGED changes only, scoped by area (patterns are heuristic; CI is the
+# backstop). Validates the worktree as-is — unstaged changes are not stashed.
+#   Rust changed     → cargo fmt --check, cargo clippy -D warnings, TS bindings
+#   Frontend changed → pnpm lint (eslint)
+
+set -uo pipefail
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+fail=0
+
+report() { if [ "$1" -eq 0 ]; then echo "  ✓ $2"; else echo "  ✗ $2"; fail=1; fi; }
+run_in() {
+  local dir="$1" label="$2"; shift 2
+  echo "── $label"
+  ( cd "$ROOT/$dir" && "$@" )
+  report $? "$label"
+}
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+rust_changed=false
+frontend_changed=false
+printf '%s\n' "$staged" | grep -qE '\.rs$|(^|/)Cargo\.(toml|lock)$' && rust_changed=true
+printf '%s\n' "$staged" | grep -vE '^(src-tauri|python)/' \
+  | grep -qE '\.(svelte|ts|tsx|js|jsx|cjs|mjs|css|html)$|(^|/)package\.json$|(^|/)pnpm-lock\.yaml$' \
+  && frontend_changed=true
+
+if [ "$rust_changed" = true ]; then
+  run_in src-tauri "cargo fmt"              cargo fmt --all -- --check
+  run_in src-tauri "cargo clippy"           cargo clippy --workspace --all-targets -- -D warnings
+  run_in src-tauri "TS bindings up to date" cargo run -p proto --features ts-export --bin gen_bindings -- --check
+fi
+
+if [ "$frontend_changed" = true ]; then
+  run_in . "pnpm lint" pnpm lint
+fi
+
+# Soft gate (warning only, never blocks): code comments must not cite plan docs
+# or plan step identifiers (conventions.md E4). Heuristic — scans newly-added
+# comment lines in staged code; review/CI is the backstop. Test-case-ID prefixes
+# (// E19 — …, fn t1_…) are a tolerated coverage convention and NOT flagged.
+plan_refs=$(
+  git diff --cached -U0 --diff-filter=ACMR -- '*.rs' '*.ts' '*.tsx' '*.svelte' 2>/dev/null \
+    | grep -E '^\+[^+]' \
+    | grep -E '//|/\*|^\+[[:space:]]*\*' \
+    | grep -E '(plans/|phase[0-9]+-m[0-9]|\bStep[ -][0-9]|[Ss]ub-step\b|M[0-9]+ Step)' \
+    | sed -E 's/^\+[[:space:]]*//' || true
+)
+if [ -n "$plan_refs" ]; then
+  echo "── plan-reference check"
+  echo "  ⚠ comment(s) may cite a plan doc or step identifier (conventions.md E4):"
+  printf '%s\n' "$plan_refs" | sed 's/^/        /'
+  echo "    → cite the design/ doc or the source instead (warning only — not blocking)."
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo "❌ pre-commit checks failed — fix the above before committing."
+  exit 1
+fi
+exit 0

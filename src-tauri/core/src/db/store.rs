@@ -132,7 +132,7 @@ mod tests {
                 end_sec: 0.5,
                 is_cut: false,
                 is_muted: false,
-                turn_offset_sample: 4410,
+                source_onset_sample: None,
                 length_samples: 17640,
             }],
             splices: vec![Splice {

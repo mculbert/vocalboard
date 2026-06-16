@@ -2,7 +2,7 @@
 //! undo/redo history, and snapshot writer.
 //!
 //! # Producer / consumer split
-//! The engine is the **producer**: `apply_batch` (Step 11b) applies edits, captures
+//! The engine is the **producer**: `apply_batch` applies edits, captures
 //! forward+inverse deltas, and calls [`crate::project::undo::History::record`]. The
 //! [`crate::project::undo::History`] consumer drives undo/redo by appending the
 //! inverse/forward journal effects.
@@ -31,9 +31,11 @@
 //! [`OpenOutcome::recovery`] is `Some` — silently ignoring it is silent data loss
 //! (post-snapshot edits were dropped).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::audio::room_tone::{decode_room_tone, RoomTone};
 use crate::db::journal::{self, JournalError};
 use crate::db::project as db_project;
 use crate::db::store::{self, StoreError};
@@ -169,7 +171,7 @@ pub struct OpenOutcome {
     /// IDs of `source_type = File` tracks whose source file could not be resolved.
     ///
     /// The Missing-Files dialog is deferred to M6; M1 returns the list here for
-    /// the Step 12 Tauri handler to surface.
+    /// the Tauri command handler to surface.
     pub missing_tracks: Vec<u32>,
     /// `Some` iff the journal tail was corrupt and the project was rolled back to
     /// the latest snapshot. Post-snapshot edits are lost.
@@ -304,6 +306,12 @@ pub struct ProjectState {
     history: History,
     sample_rate: u32,
     writer: SnapshotWriter,
+    /// Room tones keyed by track ID; derived from the store on open.
+    room_tones: BTreeMap<u32, Arc<RoomTone>>,
+    /// Absolute path of the project's `.vocalboard` SQLite file, retained so the
+    /// audio handlers can resolve the co-located `<project>.vbdata/` directory
+    /// (the resampled FLAC cache) without re-deriving it from a command param.
+    project_path: PathBuf,
 }
 
 impl std::fmt::Debug for ProjectState {
@@ -345,6 +353,8 @@ impl ProjectState {
             history: History::new(settings.undo_history_limit),
             sample_rate,
             writer: SnapshotWriter { db: writer_db },
+            room_tones: BTreeMap::new(),
+            project_path: path.to_path_buf(),
         })
     }
 
@@ -414,6 +424,18 @@ impl ProjectState {
             meta
         };
 
+        // Load room tones: for each track with a room_tone_hash, fetch and decode from the store.
+        let mut room_tones: BTreeMap<u32, Arc<RoomTone>> = BTreeMap::new();
+        for track in &meta.tracks {
+            if let Some(hash) = track.room_tone_hash {
+                if let Ok(bytes) = store::get(db.conn(), &hash) {
+                    if let Ok(rt) = decode_room_tone(&bytes) {
+                        room_tones.insert(track.id, Arc::new(rt));
+                    }
+                }
+            }
+        }
+
         // Call open_shared before moving `db` into ProjectState (immutable borrow — no conflict).
         let writer_db = db.open_shared().map_err(map_db_open_error)?;
 
@@ -427,6 +449,8 @@ impl ProjectState {
                 history: History::new(settings.undo_history_limit),
                 sample_rate,
                 writer: SnapshotWriter { db: writer_db },
+                room_tones,
+                project_path: path.to_path_buf(),
             },
             OpenOutcome {
                 missing_tracks: missing,
@@ -462,6 +486,91 @@ impl ProjectState {
     /// The project sample rate in Hz (locked at creation; immutable).
     pub fn sample_rate(&self) -> u32 {
         self.sample_rate
+    }
+
+    /// Pre-decoded room tone for a track, if one was recorded and decoded on open.
+    pub fn room_tone(&self, track_id: u32) -> Option<&Arc<RoomTone>> {
+        self.room_tones.get(&track_id)
+    }
+
+    /// Insert or replace the decoded room tone for `track_id`.
+    ///
+    /// Called by the M4 import path after a new room tone is detected and persisted.
+    pub fn insert_room_tone(&mut self, track_id: u32, rt: Arc<RoomTone>) {
+        self.room_tones.insert(track_id, rt);
+    }
+
+    /// The per-track timeline trees of the live state, keyed by `track_id`.
+    ///
+    /// Read-only borrow of the immutable [`TimelineState`](crate::project::undo::TimelineState);
+    /// holds no `Db` and performs no I/O. The audio handlers walk these to build the EDL
+    /// cursors (speech tracks) and the transcript (per-turn).
+    pub fn trees(&self) -> &crate::project::snapshot::PerTrackTrees {
+        &self.current.trees
+    }
+
+    /// The track metadata of the live state, in canonical ascending-`id` order.
+    ///
+    /// Read-only; track 0 (labels) is implicit and not listed. The export/playback
+    /// handlers project each [`TrackMeta`](crate::project::metadata::TrackMeta) into a
+    /// `TrackSource` (channels, wet/dry, length) for the renderer.
+    pub fn tracks(&self) -> &[crate::project::metadata::TrackMeta] {
+        &self.current.metadata.tracks
+    }
+
+    /// The speaker metadata of the live state, in canonical ascending-`id` order.
+    ///
+    /// Read-only; the transcript handler builds a `speaker_id → name` map from this.
+    pub fn speakers(&self) -> &[crate::project::metadata::SpeakerMeta] {
+        &self.current.metadata.speakers
+    }
+
+    /// The co-located `<project>.vbdata/` directory holding the resampled FLAC cache.
+    ///
+    /// Derived from the project file path (its `.vocalboard` extension replaced with
+    /// `.vbdata`); the dry cache lives under `<vbdata_dir>/resampled/<id>.flac`. This is
+    /// the path the audio handlers pass to `CacheSourceProvider`. Read-only; touches no disk.
+    pub fn vbdata_dir(&self) -> PathBuf {
+        self.project_path.with_extension("vbdata")
+    }
+
+    /// The directory containing the project's `.vocalboard` file.
+    ///
+    /// Falls back to `.` when the stored path has no parent. Read-only; touches no disk.
+    pub fn project_dir(&self) -> &Path {
+        self.project_path.parent().unwrap_or_else(|| Path::new("."))
+    }
+
+    /// Inject a single speech `track` + its `tree` into the live timeline state (test support).
+    ///
+    /// M2 has no public track-creation command (import lands at M4), so cross-crate handler tests
+    /// (the `app` export/playback handlers) synthesise a populated project this way. **Does not
+    /// journal** — it mutates only the in-memory `current` state, so it does not perturb the
+    /// non-journaled-command assertions that count journal rows. Feature-gated; no production
+    /// callers.
+    #[cfg(feature = "test-support")]
+    pub fn test_inject_speech_track(
+        &mut self,
+        track: crate::project::metadata::TrackMeta,
+        tree: crate::project::snapshot::TrackTree,
+    ) {
+        let mut state = (*self.current).clone();
+        state.trees.insert(track.id, tree);
+        state.metadata.tracks.push(track);
+        state.metadata.tracks.sort_by_key(|t| t.id);
+        self.current = Arc::new(state);
+    }
+
+    /// Count rows in the `journal` table (test support).
+    ///
+    /// Used by cross-crate tests to assert that non-journaled commands (`play_from`/`pause`/`stop`)
+    /// append no journal rows. Feature-gated; no production callers.
+    #[cfg(feature = "test-support")]
+    pub fn test_journal_row_count(&self) -> u64 {
+        self.db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM journal", [], |r| r.get(0))
+            .unwrap_or(0)
     }
 
     /// Apply a batch of edits atomically.
@@ -660,7 +769,7 @@ impl ProjectState {
 
 /// POSIX seconds (UTC). Called once per mutating command and threaded to every
 /// `journal::append_*` call in that command's transaction, keeping `journal.rs`
-/// clock-free and deterministic in tests (Step 9 decision).
+/// clock-free and deterministic in tests.
 fn now_posix() -> i64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -852,7 +961,7 @@ mod tests {
             assert!(v.source().is_some(), "source() must chain for {v:?}");
         }
 
-        // New 11b variants.
+        // Edit-application variants.
         let v_tree = EngineError::Tree(crate::project::tree::TreeError::SampleOutOfRange(0));
         assert!(!v_tree.to_string().is_empty(), "Tree: Display non-empty");
         assert!(v_tree.source().is_some(), "Tree: chains source()");
@@ -864,7 +973,7 @@ mod tests {
         );
         assert!(v_mm.source().is_none(), "TrackTypeMismatch: no source");
 
-        // New 11c variants.
+        // Project-file lifecycle variants.
         let v_exists = EngineError::ProjectFileExists {
             path: std::path::PathBuf::from("/x"),
         };
@@ -915,8 +1024,8 @@ mod tests {
         );
     }
 
-    // E1d — open_shared writer round-trip: save_snapshot_now still works after 11c
-    // (verifies SnapshotWriter now uses Db::open_shared internally).
+    // E1d — open_shared writer round-trip: save_snapshot_now still works
+    // (verifies SnapshotWriter uses Db::open_shared internally).
     #[test]
     fn snapshot_writer_round_trip_via_open_shared() {
         let dir = tempdir().unwrap();
@@ -930,7 +1039,7 @@ mod tests {
     }
 
     // E2 — Full lifecycle round-trip with non-empty content: build a two-track
-    // state and a non-default metadata by hand (standing in for the 11b producer),
+    // state and a non-default metadata by hand (standing in for the apply_batch producer),
     // snapshot, drop, reopen, and assert the trees AND metadata survive verbatim.
     #[test]
     fn lifecycle_round_trip_with_content() {
@@ -1114,9 +1223,9 @@ mod tests {
     // that the recovered *content* is the snapshot's. Here: build real two-track
     // content, snapshot it, apply a post-snapshot edit, corrupt that edit's row,
     // and assert open_project rolls back to the exact snapshotted trees with the
-    // post-snapshot edit dropped (plan phase1-m1-11.md § Journal-corruption
-    // recovery, step 3: "the resulting ProjectState equals the post-snapshot,
-    // pre-corruption state"). Cannot live in core/tests/ — apply_batch is pub(crate).
+    // post-snapshot edit dropped: the recovered ProjectState equals the
+    // post-snapshot, pre-corruption state (see `design/data-model.md` § Load /
+    // replay). Cannot live in core/tests/ — apply_batch is pub(crate).
     #[test]
     fn recovery_restores_post_snapshot_content() {
         let dir = tempdir().unwrap();
@@ -1318,7 +1427,95 @@ mod tests {
         );
     }
 
-    // ── apply_batch (Step 11b) ───────────────────────────────────────────────
+    // read-accessors expose the live state without holding a Db or mutating.
+    // A synthetic project receives a turn on track 1 plus a metadata row carrying one
+    // track and one speaker; trees() / tracks() / speakers() must round-trip those
+    // inputs, and vbdata_dir() / project_dir() must derive from the project file path.
+    #[test]
+    fn accessors_expose_read_state() {
+        use crate::project::metadata::{ModelUse, SourceType, SpeakerMeta, TrackMeta};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("acc.vocalboard");
+        let settings = Settings::default();
+        let mut ps = ProjectState::new_project(&path, 48000, &settings).unwrap();
+
+        // vbdata_dir / project_dir derive from the project file path, not the live state.
+        assert_eq!(ps.vbdata_dir(), dir.path().join("acc.vbdata"));
+        assert_eq!(ps.project_dir(), dir.path());
+
+        // Empty project: no trees, no tracks, no speakers.
+        assert!(ps.trees().is_empty(), "fresh project has no trees");
+        assert!(ps.tracks().is_empty(), "fresh project has no tracks");
+        assert!(ps.speakers().is_empty(), "fresh project has no speakers");
+
+        let track = TrackMeta {
+            id: 1,
+            name: "Host".to_string(),
+            source_type: SourceType::File,
+            source_path_relative: "host.wav".to_string(),
+            source_path_absolute: "/tmp/host.wav".to_string(),
+            codec: "pcm".to_string(),
+            source_sample_rate: 48000,
+            source_channels: 1,
+            project_start_sample: 0,
+            original_length_samples: 100,
+            cut_length_samples: 0,
+            drift_ppm: 0.0,
+            room_tone_hash: None,
+            models_used: ModelUse::default(),
+            wet_dry_ratio: 0.0,
+            disfluencies_identified: false,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let speaker = SpeakerMeta {
+            id: 7,
+            name: "Alice".to_string(),
+            color_hint: None,
+            embedding_hash: None,
+            track_ids: vec![1],
+        };
+        let meta = Metadata {
+            project: ProjectMeta::default(),
+            tracks: vec![track.clone()],
+            speakers: vec![speaker.clone()],
+        };
+
+        // One combined tree+metadata edit: insert a turn on track 1 and set metadata.
+        ps.apply_batch(
+            &[BatchOp {
+                track_id: 1,
+                sample: 0,
+                kind: BatchOpKind::Insert(turn_elem(1, 100)),
+            }],
+            Some(meta),
+            CommandId::Unknown,
+        )
+        .unwrap();
+
+        // trees(): the live track-1 tree is present and is a Speech tree.
+        let trees = ps.trees();
+        assert_eq!(trees.len(), 1, "exactly the one inserted track");
+        assert!(
+            matches!(trees.get(&1), Some(TrackTree::Speech(_))),
+            "track 1 is a speech tree"
+        );
+
+        // tracks() / speakers(): the metadata round-trips verbatim.
+        assert_eq!(
+            ps.tracks(),
+            &[track],
+            "tracks() returns the stored TrackMeta"
+        );
+        assert_eq!(
+            ps.speakers(),
+            &[speaker],
+            "speakers() returns the stored SpeakerMeta"
+        );
+    }
+
+    // ── apply_batch ──────────────────────────────────────────────────────────
 
     fn turn_elem(id: u64, duration: i64) -> NewElement {
         let turn = Turn {
@@ -1723,7 +1920,7 @@ mod tests {
         );
     }
 
-    // ── Step 11d: apply_batch metadata producer ──────────────────────────────
+    // ── apply_batch metadata producer ────────────────────────────────────────
 
     /// Count journal rows of a given `type` value.
     fn journal_row_count(db: &crate::db::Db, row_type: i64) -> i64 {
@@ -1937,7 +2134,7 @@ mod tests {
         );
     }
 
-    // ── Step 13: G1 round-trip fixture ──────────────────────────────────────
+    // ── G1 round-trip fixture ────────────────────────────────────────────────
 
     use crate::project::metadata::{ModelUse, SourceType, SpeakerMeta, TrackMeta};
     use crate::project::snapshot::{encode_snapshot, snapshot_from_trees};
@@ -1986,7 +2183,6 @@ mod tests {
                     source_type: SourceType::File,
                     source_path_relative: "audio/host.wav".to_string(),
                     source_path_absolute: "/nonexistent/vocalboard-fixture/host.wav".to_string(),
-                    resampled_path: None,
                     codec: "wav".to_string(),
                     source_sample_rate: 48000,
                     source_channels: 1,
@@ -1995,9 +2191,7 @@ mod tests {
                     cut_length_samples: 0,
                     drift_ppm: 0.0,
                     room_tone_hash: None,
-                    room_tone_length_samples: None,
                     models_used: ModelUse::default(),
-                    enhanced_path: None,
                     wet_dry_ratio: 0.0,
                     disfluencies_identified: false,
                     created_at: "2026-01-01T00:00:00Z".to_string(),
@@ -2152,6 +2346,74 @@ mod tests {
         );
     }
 
+    // RT1 — open_project loads a persisted room-tone blob into ProjectState.room_tones.
+    #[test]
+    fn open_project_loads_room_tone() {
+        use crate::audio::room_tone::{encode_room_tone, RoomTone};
+        use crate::db::{journal, store};
+        use crate::project::metadata::{encode_metadata, ModelUse, SourceType, TrackMeta};
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("rt.vocalboard");
+        let settings = Settings::default();
+
+        // Create a project and write a room-tone blob + track metadata referencing it.
+        let ps = ProjectState::new_project(&path, 48000, &settings).unwrap();
+
+        let rt = RoomTone {
+            samples: vec![0.0f32; 480],
+            channels: 1,
+            sample_rate: 48000,
+            rms: 0.01,
+        };
+        let (rt_hash, rt_bytes) = encode_room_tone(&rt).unwrap();
+        store::put(ps.db.conn(), &rt_hash, &rt_bytes).unwrap();
+
+        let meta = Metadata {
+            project: ProjectMeta {
+                name: None,
+                aligned_groups: vec![],
+            },
+            tracks: vec![TrackMeta {
+                id: 1,
+                name: "Host".to_string(),
+                source_type: SourceType::File,
+                source_path_relative: "audio/host.wav".to_string(),
+                source_path_absolute: "/nonexistent/host.wav".to_string(),
+                codec: "wav".to_string(),
+                source_sample_rate: 48000,
+                source_channels: 1,
+                project_start_sample: 0,
+                original_length_samples: 480,
+                cut_length_samples: 0,
+                drift_ppm: 0.0,
+                room_tone_hash: Some(rt_hash),
+                models_used: ModelUse::default(),
+                wet_dry_ratio: 0.0,
+                disfluencies_identified: false,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                updated_at: "2026-01-01T00:00:00Z".to_string(),
+            }],
+            speakers: vec![],
+        };
+        let (mh, mbytes) = encode_metadata(&meta).unwrap();
+        store::put(ps.db.conn(), &mh, &mbytes).unwrap();
+        journal::append_metadata(ps.db.conn(), CommandId::Unknown, &mh, 0).unwrap();
+        drop(ps);
+
+        // Re-open and verify room_tone is resident.
+        let (ps2, _) = ProjectState::open_project(&path, &settings).unwrap();
+        let loaded = ps2
+            .room_tone(1)
+            .expect("RT1: room_tone must be resident after open");
+        assert_eq!(loaded.samples.len(), 480, "RT1: sample count matches");
+        assert_eq!(
+            loaded.samples.len(),
+            rt.samples.len(),
+            "RT1: derived length matches blob"
+        );
+    }
+
     // AB8 — no-op: empty ops + None metadata returns Ok and adds no journal rows.
     #[test]
     fn apply_batch_noop() {
@@ -2178,5 +2440,57 @@ mod tests {
             !ps.history.can_undo(),
             "no-op must not be recorded in history"
         );
+    }
+
+    // insert_room_tone actually stores the tone, retrievable per-track by room_tone().
+    #[test]
+    fn insert_room_tone_round_trips() {
+        use crate::audio::room_tone::RoomTone;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("rt.vocalboard");
+        let settings = Settings::default();
+        let mut ps = ProjectState::new_project(&path, 48000, &settings).unwrap();
+
+        assert!(ps.room_tone(1).is_none(), "absent before insert");
+        let rt = Arc::new(RoomTone {
+            samples: vec![0.25f32; 96],
+            channels: 2,
+            sample_rate: 48000,
+            rms: 0.25,
+        });
+        ps.insert_room_tone(1, Arc::clone(&rt));
+
+        let got = ps.room_tone(1).expect("present after insert");
+        assert_eq!(
+            got.samples.len(),
+            96,
+            "stored tone retrievable for the track"
+        );
+        assert_eq!(got.channels, 2);
+        assert!(ps.room_tone(2).is_none(), "other tracks unaffected");
+    }
+
+    // now_posix returns a plausible *current* UTC timestamp, not a fixed sentinel.
+    #[test]
+    fn now_posix_is_a_recent_timestamp() {
+        // 1_700_000_000 = 2023-11-14; the wall clock is well past it (and far from 0/1/-1).
+        assert!(
+            now_posix() >= 1_700_000_000,
+            "now_posix must report the real clock, got {}",
+            now_posix()
+        );
+    }
+
+    // ProjectState's Debug surfaces the sample rate (not an empty/blank impl).
+    #[test]
+    fn project_state_debug_shows_sample_rate() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("dbg.vocalboard");
+        let settings = Settings::default();
+        let ps = ProjectState::new_project(&path, 48000, &settings).unwrap();
+        let s = format!("{ps:?}");
+        assert!(s.contains("ProjectState"), "debug names the struct: {s}");
+        assert!(s.contains("48000"), "debug shows the sample rate: {s}");
     }
 }

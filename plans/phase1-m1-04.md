@@ -2,13 +2,13 @@
 
 Per-step action plan for Step 4 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Turn payload (speech tracks)](data-model.md#turn-payload-speech-tracks)
-and [§ Label payload (track 0)](data-model.md#label-payload-track-0).
+[data-model.md § Turn payload (speech tracks)](../design/data-model.md#turn-payload-speech-tracks)
+and [§ Label payload (track 0)](../design/data-model.md#label-payload-track-0).
 This step defines the units stored in the content-addressed blob store: the
 in-memory `Turn` / `Word` / `Splice` (latest format) for speech tracks and
 `Label` for track 0, each with a frozen V1 wire schema and a kind-typed
 dispatching loader/writer that calls into the generic primitives from
-[Step 3](phase1-m1-03.md). It also introduces the [`Tilable`](data-model.md#tilable-trait)
+[Step 3](phase1-m1-03.md). It also introduces the [`Tilable`](../design/data-model.md#tilable-trait)
 trait that lets Step 6's implicit timeline tree be generic over its element type.
 
 **Definition of done:** the project module exposes `Tilable`, `Turn`, `Word`,
@@ -50,7 +50,7 @@ deserializer fired at load time.
 
 The shape of the M1 V1 wire formats is the project's first persisted-blob
 contract. Once shipped, V1 deserialization MUST work on any future build (G1 in
-[conventions.md](conventions.md#g-data--persistence-integrity)), which is why
+[conventions.md](../design/conventions.md#g-data--persistence-integrity)), which is why
 each V1 is defined as its own frozen struct from day 1 rather than as an alias
 for the in-memory shape.
 
@@ -119,7 +119,7 @@ for the in-memory shape.
   `debug_assert!`s (landing with the M4/M5 constructors). M1's element structs
   are plain `pub`-fields structs with no constructor, so no assertion lives in
   Step 4 itself; the cross-reference to
-  [data-model.md § Time representation](data-model.md#time-representation)
+  [data-model.md § Time representation](../design/data-model.md#time-representation)
   carries the rule.
 
 - **V1 frozen-shape discipline binds at first public release, not at this
@@ -144,7 +144,7 @@ for the in-memory shape.
 /// Total contribution of this element to its track's timeline, in project-rate samples.
 ///
 /// Used by the tree's `left_subtree_sum` augmentation and the temporal-query
-/// advance step. See [data-model.md § Tilable trait](data-model.md#tilable-trait).
+/// advance step. See [data-model.md § Tilable trait](../design/data-model.md#tilable-trait).
 pub trait Tilable {
     /// Returns the element's total contribution to the timeline, in samples.
     fn total_duration(&self) -> i64;
@@ -259,7 +259,7 @@ in the wild):
 
 1. Add `next_label_id INTEGER NOT NULL DEFAULT 1` to the `project` table,
    between `next_turn_id` and `created_at`, matching
-   [data-model.md § Schema DDL](data-model.md#schema-ddl-phase-1-user_version--1).
+   [data-model.md § Schema DDL](../design/data-model.md#schema-ddl-phase-1-user_version--1).
 
 2. Bump the `min_app_version` column default from `'0.1.0'` to `'0.1.1'`.
    This is the in-flight-dev-project safety valve: dev projects created
@@ -365,7 +365,7 @@ matching the Turn helper's structure.
    and `Source { source_start_sample }` set to `i64::MAX` (and a small positive
    value); encodes and decodes losslessly. Does **not** test negatives — sample
    fields are nominally ≥0; see
-   [data-model.md § Time representation](data-model.md#time-representation).
+   [data-model.md § Time representation](../design/data-model.md#time-representation).
 7. **`hash_determinism`** — two encodings of the same `Turn` yield byte-identical
    bytes and the same `Hash`.
 8. **`hash_sensitive_to_id`** — `id` change ⇒ different hash.
@@ -471,9 +471,9 @@ H3. (`tag_round_trip` already covers `Kind::Label` once it's in `ALL_KINDS`.)
   hasn't broken Step 2's migration tests.
 - `cargo test -p core` — confirms no regression against other modules.
 - Manual diff review of `turn.rs`, `label.rs`, and `tilable.rs` against
-  [data-model.md § Turn payload (speech tracks)](data-model.md#turn-payload-speech-tracks),
-  [§ Label payload (track 0)](data-model.md#label-payload-track-0), and
-  [§ Tilable trait](data-model.md#tilable-trait) for field-for-field
+  [data-model.md § Turn payload (speech tracks)](../design/data-model.md#turn-payload-speech-tracks),
+  [§ Label payload (track 0)](../design/data-model.md#label-payload-track-0), and
+  [§ Tilable trait](../design/data-model.md#tilable-trait) for field-for-field
   correspondence.
 - One commit on `claude/1M1`, **unsigned** per the GPG-by-branch policy in
   [CLAUDE.md](../CLAUDE.md). Bundles the three module files (`turn.rs`,

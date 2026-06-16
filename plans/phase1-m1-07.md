@@ -2,8 +2,8 @@
 
 Per-step action plan for Step 7 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Deltas](data-model.md#deltas) and
-[§ Load / replay](data-model.md#load--replay). This step lays down the
+[data-model.md § Deltas](../design/data-model.md#deltas) and
+[§ Load / replay](../design/data-model.md#load--replay). This step lays down the
 **delta language** — the three-operation, kind-agnostic edit primitive that
 carries the project's evolution between snapshots — and the **working
 adjacency list** that replay and forward-edit code drive deltas against.
@@ -29,7 +29,7 @@ already holds the `h_old` / `h_removed` it needs to capture the
 inverse at the edit site, and emits the forward+inverse pair as a
 side effect of the edit by calling the right `Delta::{insert,update,
 delete}_after` constructor with the right hash. The "inversion rules"
-in [data-model.md § Undo / redo](data-model.md#undo--redo) are thus
+in [data-model.md § Undo / redo](../design/data-model.md#undo--redo) are thus
 documented behaviour at the engine layer, not code in `delta.rs`. The
 `AdjacencyList` exists **purely as the replay-side intermediate**
 (Step 8): snapshot → seed adjacency → apply forward delta batches in
@@ -76,7 +76,7 @@ the same `apply` work for both speech tracks and track 0.
 
 - **Flat `Delta` struct with `op: DeltaOp` + `hash: Option<Hash>`** —
   not a sum-variant `enum Delta`. This matches the spec shape in
-  [data-model.md § Deltas](data-model.md#deltas) field-for-field:
+  [data-model.md § Deltas](../design/data-model.md#deltas) field-for-field:
 
   ```rust
   pub struct Delta {
@@ -122,7 +122,7 @@ the same `apply` work for both speech tracks and track 0.
   `Ord` needed, so no new derive on `Hash`. `HashMap` is the natural
   choice here because the adjacency list is **ephemeral** (not
   persisted, not content-addressed) and the determinism invariant in
-  [CLAUDE.md](../CLAUDE.md) (and [conventions.md](conventions.md))
+  [CLAUDE.md](../CLAUDE.md) (and [conventions.md](../design/conventions.md))
   applies only to hashed structs. Walks always go from `Start` and
   use lookup, never iteration over the map. Per-track storage cost
   is one extra entry (the trailing `→ None`) and 17-byte values
@@ -148,7 +148,7 @@ the same `apply` work for both speech tracks and track 0.
 - **`apply` mutates in place; no `apply_with_inverse` ships.** Replay
   doesn't need inverses (it's pure reconstruction; the undo stack
   starts empty after open per
-  [data-model.md § Undo / redo](data-model.md#undo--redo)), and
+  [data-model.md § Undo / redo](../design/data-model.md#undo--redo)), and
   forward edits don't go through this code path at all (see prior
   decision). An inverse-batch helper in `delta.rs` would have no
   caller in M1.
@@ -770,8 +770,8 @@ X1. **`mixed_track_ids_coexist_in_batch`** — apply a batch
 ## Documentation touches
 
 - **`data-model.md`** — no changes required. The
-  [§ Deltas](data-model.md#deltas) and
-  [§ Load / replay](data-model.md#load--replay) sections were
+  [§ Deltas](../design/data-model.md#deltas) and
+  [§ Load / replay](../design/data-model.md#load--replay) sections were
   already updated in Step 4 to the post-`Location::After(Hash)`
   rename and to mention per-track-id load dispatch. The Delta
   struct shape in this step matches them field-for-field.
@@ -813,7 +813,7 @@ X1. **`mixed_track_ids_coexist_in_batch`** — apply a batch
   adjacency list** — left undefined; the engine never produces
   such a delta because every newly-created element carries a
   freshly-allocated `next_turn_id` / `next_label_id` (per
-  [data-model.md § Turn payload](data-model.md#turn-payload-speech-tracks)).
+  [data-model.md § Turn payload](../design/data-model.md#turn-payload-speech-tracks)).
   No invariant guard in `delta.rs` because no current caller can
   trip it; the worked case is "the hash silently displaces the
   existing element's outgoing edge," which is a self-consistent
@@ -828,7 +828,7 @@ X1. **`mixed_track_ids_coexist_in_batch`** — apply a batch
   `unwrap_used`, `expect_used`, `panic`, and `missing_docs` all
   CI-gated). The `apply_one` body uses `.expect("validated above")`
   on the `hash.unwrap()` calls — this is the documented justifying
-  comment pattern from [conventions.md](conventions.md); the
+  comment pattern from [conventions.md](../design/conventions.md); the
   preceding match arm exhaustively rules out the `None` case.
 - `cargo test -p core delta::` — runs the tests above (~39 tests:
   6 AdjacencyList + 11 apply-per-variant + 4 batch behaviour + 7
@@ -837,7 +837,7 @@ X1. **`mixed_track_ids_coexist_in_batch`** — apply a batch
   the new `pub mod delta;` line in `project/mod.rs` doesn't
   conflict with anything).
 - Manual diff review of `delta.rs` against
-  [data-model.md § Deltas](data-model.md#deltas) for
+  [data-model.md § Deltas](../design/data-model.md#deltas) for
   field-for-field correspondence.
 - One commit on `claude/1M1`, **unsigned** per the GPG-by-branch
   policy in [CLAUDE.md](../CLAUDE.md). Subject:

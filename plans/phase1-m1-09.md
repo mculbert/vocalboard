@@ -2,10 +2,10 @@
 
 Per-step action plan for Step 9 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Schema DDL](data-model.md#schema-ddl-phase-1-user_version--1)
-(the `journal` table), [§ Non-timeline data](data-model.md#non-timeline-data)
-(the `Metadata` family), [§ Deltas](data-model.md#deltas) (the `command_id`
-enum-code contract), and [§ Audio file resolution](data-model.md#audio-file-resolution).
+[data-model.md § Schema DDL](../design/data-model.md#schema-ddl-phase-1-user_version--1)
+(the `journal` table), [§ Non-timeline data](../design/data-model.md#non-timeline-data)
+(the `Metadata` family), [§ Deltas](../design/data-model.md#deltas) (the `command_id`
+enum-code contract), and [§ Audio file resolution](../design/data-model.md#audio-file-resolution).
 This step adds the **journal append/write path** (the three row types), the
 **`CommandId` enum** that gives each journal row its command-type code, and the
 **global metadata object** (`type = -1` blob) with its most-recent-wins load and
@@ -82,7 +82,7 @@ compose.
 ### `CommandId` enum: bit-mask category codes, append-only (`project/command_id.rs`)
 
 Every journal row carries a `command_id` — the enum code for the **command
-category** that produced it ([data-model.md § Deltas](data-model.md#deltas)):
+category** that produced it ([data-model.md § Deltas](../design/data-model.md#deltas)):
 metadata for inspection and the future **view/restore-historical-state** feature,
 **not** a counter and **not** an undo-grouping key. The read side
 ([Step 8](phase1-m1-08.md)) keeps it a raw `i64` deliberately; this step
@@ -268,7 +268,7 @@ impl CommandId {
 ### Journal write side: one private `append_row` + three typed wrappers (`db/journal.rs`)
 
 The journal append path produces all three row types from
-[data-model.md § Write path](data-model.md#write-path) and § Non-timeline data.
+[data-model.md § Write path](../design/data-model.md#write-path) and § Non-timeline data.
 All three share one INSERT; the typed wrappers differ only in the `type` code and
 how the payload is formed:
 
@@ -321,7 +321,7 @@ Locked design points:
 - **`conn: &Connection` works inside a transaction.** `rusqlite::Transaction`
   derefs to `&Connection`, so the engine's single-transaction write path
   (`store::put` + `journal::append_*`, per
-  [data-model.md § Write path](data-model.md#write-path)) passes `tx` to both —
+  [data-model.md § Write path](../design/data-model.md#write-path)) passes `tx` to both —
   exactly as `store::put` is already called with `tx` in `store.rs` tests.
 - **Typed `command_id: CommandId`** (not raw `i64`) at the wrapper boundary —
   the only legal source of a code is the enum, converted internally via
@@ -334,7 +334,7 @@ Locked design points:
 ### Third read helper: `latest_metadata` (`db/journal.rs`)
 
 Metadata load is most-recent-wins with **no replay**
-([data-model.md § Non-timeline data](data-model.md#non-timeline-data)): the
+([data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data)): the
 current metadata is the blob pointed to by the highest-id `type = -1` row. That is
 a third journal read query alongside `latest_snapshot` / `deltas_after` (flagged
 in [phase1-m1-08 § Downstream implications](phase1-m1-08.md#downstream-implications-flag-for-later-steps)):
@@ -380,7 +380,7 @@ pub(crate) fn latest_metadata(conn: &Connection, as_of: Option<i64>)
 `Metadata` is a store-resident, content-addressed blob (`Kind::Metadata = 0x2`,
 already in the `Kind` enum). It gets the **same four-part treatment** as Turn /
 Label / Snapshot — and is a **new persisted format**, so per the data-integrity
-invariant ([conventions.md](conventions.md) G1 / [CLAUDE.md](../CLAUDE.md)) it
+invariant ([conventions.md](../design/conventions.md) G1 / [CLAUDE.md](../CLAUDE.md)) it
 ships pinned-bytes + pinned-hash tests in this step.
 
 ```rust
@@ -549,7 +549,7 @@ pub(crate) fn load_current_metadata(db: &Db, as_of: Option<i64>)
 
 ### Source-file resolution is **pure** (no DB writes); M1 returns the missing list
 
-Per [data-model.md § Audio file resolution](data-model.md#audio-file-resolution),
+Per [data-model.md § Audio file resolution](../design/data-model.md#audio-file-resolution),
 each `source_type = 'file'` track resolves: (1) relative-to-project hit → use it;
 (2) else absolute-path-on-disk hit → use it *and* update the stored relative path;
 (3) else missing. The **Missing-Files dialog is M6**; M1 only produces the list
@@ -588,7 +588,7 @@ pub(crate) fn missing_tracks(project_dir: &Path, meta: &Metadata) -> Vec<u32>;
   (flagged for Step 11 / M6 — see Documentation touches).
 - `Recording` tracks → `NotApplicable`; `missing_tracks` skips them.
 - Path handling: stored paths use `/` separators ([data-model.md § Derived
-  files](data-model.md#derived-files)); build the candidate via
+  files](../design/data-model.md#derived-files)); build the candidate via
   `project_dir.join(source_path_relative)` (Rust's `Path::join` accepts `/` on all
   platforms for relative components). Use `Path::exists()` for the on-disk check.
 - `pub(crate)` + `#[allow(dead_code)]` until Step 11.
@@ -596,7 +596,7 @@ pub(crate) fn missing_tracks(project_dir: &Path, meta: &Metadata) -> Vec<u32>;
 ### `Metadata` blob's `ProjectMeta` struct vs the `project` SQLite table — keep them distinct
 
 A known confusion point flagged in
-[data-model.md § Non-timeline data](data-model.md#non-timeline-data): the
+[data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data): the
 `ProjectMeta` **struct** (inside the `Metadata` blob — `name`, `aligned_groups`)
 is **not** the `project` **SQLite singleton table** (`sample_rate`, `next_*_id`
 counters, `created_at`/`updated_at`). **The SQLite table is now named `project`
@@ -815,7 +815,7 @@ These need a real `Db` (build via `tempfile`, like the journal tests).
   holds the single `h_rt` row exactly once (`SELECT COUNT(*) … WHERE hash = h_rt`
   == 1) and two distinct metadata blobs (A's hash ≠ B's hash). Pins "a rename
   re-serializes only `Metadata`; referenced binaries are reused by hash"
-  ([data-model.md § Non-timeline data](data-model.md#non-timeline-data)).
+  ([data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data)).
 - **MR4 `load_current_metadata_surfaces_store_error`** — `append_metadata` a hash
   whose blob was never `put` ⇒ `load_current_metadata(&db, None)` returns
   `Err(MetadataLoadError::Store(StoreError::NotFound(_)))`.
@@ -916,9 +916,9 @@ Use `tempfile::tempdir()` for the project dir; create/skip files with
 - `cargo test -p core` — confirms no regression from the new `pub mod command_id;`
   / `pub mod metadata;` lines and the `journal.rs` additions.
 - Manual diff review of `metadata.rs` against
-  [data-model.md § Non-timeline data](data-model.md#non-timeline-data) (field-for-field)
+  [data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data) (field-for-field)
   and `resolve_track_source` against
-  [§ Audio file resolution](data-model.md#audio-file-resolution) (step-for-step).
+  [§ Audio file resolution](../design/data-model.md#audio-file-resolution) (step-for-step).
 - One commit on `claude/1M1`, **unsigned** per the GPG-by-branch policy in
   [CLAUDE.md](../CLAUDE.md). Suggested subject:
   `1M1-09: journal write side + command codes + metadata`. Bundles

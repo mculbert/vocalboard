@@ -56,8 +56,10 @@ pub struct Word {
     pub is_cut: bool,
     /// Whether this word has been muted (silenced in playback).
     pub is_muted: bool,
-    /// Word onset within this turn, in project-rate samples.
-    pub turn_offset_sample: i64,
+    /// Zero-crossing-accurate word onset as an absolute sample offset in the project-rate
+    /// source/cache timeline. `None` until the zero-crossing has been refined (lazy except
+    /// for the first word of each turn, refined eagerly at import).
+    pub source_onset_sample: Option<i64>,
     /// Precise word length in project-rate samples (0 until zero-crossing is computed).
     pub length_samples: i64,
 }
@@ -99,8 +101,6 @@ pub enum SpliceKind {
     Source {
         /// Sample offset of the first sample to read in the source file.
         source_start_sample: i64,
-        /// Resampled samples to discard before playback begins.
-        source_decode_offset: i64,
     },
     /// Audio drawn from the track's room-tone recording.
     RoomTone,
@@ -189,8 +189,9 @@ pub mod v1 {
         pub is_cut: bool,
         /// Whether this word is muted.
         pub is_muted: bool,
-        /// Word onset within the turn, in project-rate samples.
-        pub turn_offset_sample: i64,
+        /// Zero-crossing-accurate word onset as an absolute sample offset in the
+        /// project-rate source/cache timeline. `None` until refined.
+        pub source_onset_sample: Option<i64>,
         /// Precise word length in project-rate samples.
         pub length_samples: i64,
     }
@@ -226,8 +227,6 @@ pub mod v1 {
         Source {
             /// Sample offset in the source file.
             source_start_sample: i64,
-            /// Resampled samples to discard before playback.
-            source_decode_offset: i64,
         },
         /// Audio from the room-tone recording.
         RoomTone,
@@ -263,10 +262,8 @@ impl From<v1::SpliceKindV1> for SpliceKind {
         match v {
             v1::SpliceKindV1::Source {
                 source_start_sample,
-                source_decode_offset,
             } => SpliceKind::Source {
                 source_start_sample,
-                source_decode_offset,
             },
             v1::SpliceKindV1::RoomTone => SpliceKind::RoomTone,
             v1::SpliceKindV1::Silence => SpliceKind::Silence,
@@ -279,10 +276,8 @@ impl From<SpliceKind> for v1::SpliceKindV1 {
         match v {
             SpliceKind::Source {
                 source_start_sample,
-                source_decode_offset,
             } => v1::SpliceKindV1::Source {
                 source_start_sample,
-                source_decode_offset,
             },
             SpliceKind::RoomTone => v1::SpliceKindV1::RoomTone,
             SpliceKind::Silence => v1::SpliceKindV1::Silence,
@@ -299,7 +294,7 @@ impl From<v1::WordV1> for Word {
             end_sec: v.end_sec,
             is_cut: v.is_cut,
             is_muted: v.is_muted,
-            turn_offset_sample: v.turn_offset_sample,
+            source_onset_sample: v.source_onset_sample,
             length_samples: v.length_samples,
         }
     }
@@ -314,7 +309,7 @@ impl From<&Word> for v1::WordV1 {
             end_sec: v.end_sec,
             is_cut: v.is_cut,
             is_muted: v.is_muted,
-            turn_offset_sample: v.turn_offset_sample,
+            source_onset_sample: v.source_onset_sample,
             length_samples: v.length_samples,
         }
     }
@@ -388,7 +383,7 @@ mod tests {
                     end_sec: 0.4,
                     is_cut: false,
                     is_muted: false,
-                    turn_offset_sample: 4410,
+                    source_onset_sample: None,
                     length_samples: 13230,
                 },
                 Word {
@@ -398,7 +393,7 @@ mod tests {
                     end_sec: 0.6,
                     is_cut: true,
                     is_muted: false,
-                    turn_offset_sample: 17640,
+                    source_onset_sample: None,
                     length_samples: 8820,
                 },
                 Word {
@@ -408,7 +403,7 @@ mod tests {
                     end_sec: 1.0,
                     is_cut: false,
                     is_muted: true,
-                    turn_offset_sample: 30870,
+                    source_onset_sample: None,
                     length_samples: 13230,
                 },
             ],
@@ -419,7 +414,6 @@ mod tests {
                     fade_out_samples: 100,
                     kind: SpliceKind::Source {
                         source_start_sample: 88200,
-                        source_decode_offset: 0,
                     },
                 },
                 Splice {
@@ -446,7 +440,7 @@ mod tests {
                 end_sec: 0.5,
                 is_cut: false,
                 is_muted: false,
-                turn_offset_sample: 4410,
+                source_onset_sample: Some(4410),
                 length_samples: 17640,
             }],
             splices: vec![
@@ -456,7 +450,6 @@ mod tests {
                     fade_out_samples: 100,
                     kind: v1::SpliceKindV1::Source {
                         source_start_sample: 1000,
-                        source_decode_offset: 0,
                     },
                 },
                 v1::SpliceV1 {
@@ -505,7 +498,7 @@ mod tests {
                 end_sec: 1.5,
                 is_cut: false,
                 is_muted: false,
-                turn_offset_sample: 0,
+                source_onset_sample: None,
                 length_samples: 22050,
             }],
             splices: vec![Splice {
@@ -514,7 +507,6 @@ mod tests {
                 fade_out_samples: 0,
                 kind: SpliceKind::Source {
                     source_start_sample: 44100,
-                    source_decode_offset: 0,
                 },
             }],
         };
@@ -531,7 +523,7 @@ mod tests {
             end_sec: 0.1,
             is_cut: false,
             is_muted: false,
-            turn_offset_sample: 0,
+            source_onset_sample: None,
             length_samples: 4410,
         };
         let turn = Turn {
@@ -570,7 +562,6 @@ mod tests {
                     fade_out_samples: 10,
                     kind: SpliceKind::Source {
                         source_start_sample: 100,
-                        source_decode_offset: 50,
                     },
                 },
                 Splice {
@@ -593,7 +584,6 @@ mod tests {
             decoded.splices[0].kind,
             SpliceKind::Source {
                 source_start_sample: 100,
-                source_decode_offset: 50,
             }
         );
         assert_eq!(decoded.splices[1].kind, SpliceKind::RoomTone);
@@ -614,7 +604,7 @@ mod tests {
                 end_sec: 1.0,
                 is_cut: false,
                 is_muted: false,
-                turn_offset_sample: 1,
+                source_onset_sample: None,
                 length_samples: i64::MAX,
             }],
             splices: vec![Splice {
@@ -623,7 +613,6 @@ mod tests {
                 fade_out_samples: 0,
                 kind: SpliceKind::Source {
                     source_start_sample: i64::MAX,
-                    source_decode_offset: 1,
                 },
             }],
         };
@@ -679,11 +668,9 @@ mod tests {
         let mut t2 = sample_turn();
         t1.splices[0].kind = SpliceKind::Source {
             source_start_sample: 1000,
-            source_decode_offset: 0,
         };
         t2.splices[0].kind = SpliceKind::Source {
             source_start_sample: 2000,
-            source_decode_offset: 0,
         };
         let (h1, _) = encode_turn(&t1).unwrap();
         let (h2, _) = encode_turn(&t2).unwrap();
@@ -794,15 +781,17 @@ mod tests {
 
     // Captured via capture_pinned_values after revising TurnV1 shape.
     // Regenerate if TurnV1 / WordV1 / SpliceV1 shape or postcard encoding changes.
+    // Revised for 1M2-06: Word::turn_offset_sample → source_onset_sample: Option<i64>
+    // (Some(4410) adds a 0x01 discriminant byte before the zigzag-encoded value).
     const PINNED_WIRE_BYTES: [u8; 59] = [
         0x11, 0x01, 0x01, 0x2a, 0x88, 0xb1, 0x05, 0xe8, 0x89, 0x01, 0x01, 0x00, 0x05, 0x68, 0x65,
         0x6c, 0x6c, 0x6f, 0x9a, 0x99, 0x99, 0x99, 0x99, 0x99, 0xb9, 0x3f, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0xe0, 0x3f, 0x00, 0x00, 0xf4, 0x44, 0xd0, 0x93, 0x02, 0x02, 0x88, 0xb1, 0x05,
-        0xc8, 0x01, 0xc8, 0x01, 0x00, 0xd0, 0x0f, 0x00, 0xe8, 0x89, 0x01, 0x00, 0x00, 0x02,
+        0x00, 0x00, 0xe0, 0x3f, 0x00, 0x00, 0x01, 0xf4, 0x44, 0xd0, 0x93, 0x02, 0x02, 0x88, 0xb1,
+        0x05, 0xc8, 0x01, 0xc8, 0x01, 0x00, 0xd0, 0x0f, 0xe8, 0x89, 0x01, 0x00, 0x00, 0x02,
     ];
     const PINNED_HASH: [u8; 16] = [
-        0x4b, 0x01, 0x18, 0x1f, 0x71, 0x68, 0xfd, 0xdf, 0xf6, 0x88, 0x6b, 0xd4, 0x0d, 0xeb, 0x25,
-        0xa2,
+        0x16, 0xc1, 0x65, 0xde, 0x4d, 0x35, 0xf4, 0x01, 0x99, 0x19, 0x37, 0x34, 0x1a, 0xe6, 0x23,
+        0x79,
     ];
 
     // Helper to capture pinned values after a shape revision.

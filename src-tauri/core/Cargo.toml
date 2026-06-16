@@ -14,20 +14,35 @@ workspace = true
 # Opt-in: tests that spawn the real Python sidecar (`-m vocalboard_sidecar`).
 # Off by default so a bare `cargo test --workspace` needs no Python on PATH.
 sidecar-integration = []
+# Opt-in: cross-crate test support (e.g. `app`'s handler tests synthesising a populated
+# `ProjectState` before M4 adds the real import command). Off in production builds; the gated
+# helpers carry no production callers.
+test-support = []
 
 [dependencies]
 proto = { path = "../proto" }
 
 anyhow = "1"
 blake3 = "1"
+cpal = "0.17"
+flacenc = "0.5"
 postcard = { version = "1", default-features = false, features = ["use-std"] }
+rtrb = "0.3"
+rubato = "3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+symphonia = { version = "0.6", default-features = false, features = [
+    "aac", "aiff", "alac", "flac", "isomp4", "mp3",
+    "ogg", "pcm", "vorbis", "wav",
+    "all-meta", "opt-simd",
+] }
 tokio = { version = "1", features = ["process", "io-util", "sync", "time", "rt"] }
 tracing = "0.1"
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+# Same MD5 crate flacenc uses; tests recompute the FLAC STREAMINFO digest independently.
+md-5 = "0.10"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

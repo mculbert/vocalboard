@@ -6,7 +6,7 @@
 CREATE TABLE project (
     id               INTEGER PRIMARY KEY CHECK (id = 1), -- singleton row
     schema_version   INTEGER NOT NULL DEFAULT 1,
-    min_app_version  TEXT    NOT NULL DEFAULT '0.1.1',   -- semver; older apps refuse this file
+    min_app_version  TEXT    NOT NULL DEFAULT '0.1.2',   -- semver; older apps refuse this file
     sample_rate      INTEGER NOT NULL DEFAULT 48000,     -- locked at creation
     -- Monotonic ID counters: the NEXT value to assign. Persisted so that IDs
     -- stay unique across sessions. Track 0 is reserved for the labels track,

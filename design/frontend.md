@@ -259,5 +259,4 @@ lands in M3). They are recorded here so they are not lost before the UI is built
   Machine feature. When the user enters `0`, the dialog **must trigger a warning/confirmation**
   so they explicitly acknowledge undo will be off — never accept `0` silently. The backend
   accepts `0` without objection (the engine's in-memory `History` simply skips recording), so
-  this gate is frontend-only. See [data-model.md § Undo / redo](data-model.md#undo--redo) and
-  [phase1-m1-11.md § Undo limit = 0](phase1-m1-11.md).
+  this gate is frontend-only. See [data-model.md § Undo / redo](data-model.md#undo--redo).

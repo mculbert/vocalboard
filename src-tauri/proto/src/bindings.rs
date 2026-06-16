@@ -4,7 +4,7 @@
 use ts_rs::TS as _;
 
 use crate::error::CommandError;
-use crate::{commands, envelope, error, sidecar};
+use crate::{commands, envelope, error, events, sidecar};
 
 /// Assembles the single-file TypeScript binding output for all proto types.
 ///
@@ -60,6 +60,26 @@ pub fn render() -> String {
         format!("export {}", commands::RecoveryReport::decl()),
         String::new(),
         format!("export {}", commands::OpenProjectResult::decl()),
+        String::new(),
+        format!("export {}", commands::AudioFormat::decl()),
+        String::new(),
+        format!("export {}", commands::TranscriptFormat::decl()),
+        String::new(),
+        format!("export {}", commands::PlayFromParams::decl()),
+        String::new(),
+        format!("export {}", commands::PauseParams::decl()),
+        String::new(),
+        format!("export {}", commands::StopParams::decl()),
+        String::new(),
+        format!("export {}", commands::ExportTrackParams::decl()),
+        String::new(),
+        format!("export {}", commands::ExportMixedParams::decl()),
+        String::new(),
+        format!("export {}", commands::ExportTranscriptParams::decl()),
+        String::new(),
+        format!("export {}", events::PlayheadUpdate::decl()),
+        String::new(),
+        format!("export {}", events::PlaybackStopped::decl()),
         String::new(),
     ];
     sections.join("\n")

@@ -8,6 +8,7 @@ pub mod label;
 pub mod metadata;
 pub mod snapshot;
 pub mod tilable;
+pub mod transcript;
 pub mod tree;
 pub mod turn;
 pub mod undo;

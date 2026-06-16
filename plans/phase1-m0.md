@@ -38,14 +38,14 @@ feature work begins.
 - Add a `[workspace.lints.clippy]` block setting `unwrap_used`, `expect_used`, `panic`,
   `cognitive_complexity`, and `too_many_lines` to `warn` (becomes a hard failure under the
   `clippy -- -D warnings` gate in Step 9); add `#![warn(missing_docs)]` to each crate's
-  `lib.rs` / `main.rs`. Enforces [conventions.md](conventions.md) C1, B1, E2.
+  `lib.rs` / `main.rs`. Enforces [conventions.md](../design/conventions.md) C1, B1, E2.
 - Commit a `deny.toml` (license allowlist + advisory policy) for `cargo deny` (Step 9; norm I1).
 - **Verify:** `cargo build && cargo test` green (empty); `cargo clippy -- -D warnings` clean.
 
 ## Step 3 — `proto` crate: the IPC contract
 
 - Define the NDJSON envelope (serde, mirrors
-  [architecture.md § IPC](architecture.md#ipc-protocol)):
+  [architecture.md § IPC](../design/architecture.md#ipc-protocol)):
   `Request { request_id, command, version, payload }`, `Cancel`, and the Python→Rust
   event union `Progress | Log | Result | Error`.
 - Define the command param/result types as an enum/structs (start with `new_project`
@@ -94,7 +94,7 @@ feature work begins.
 - `routes/+page.svelte` welcome stub that calls `get_app_info` / `ping_sidecar` and
   renders the result — the **end-to-end smoke test**.
 - Add `eslint` + `eslint-plugin-svelte` with the `svelte/a11y-*` rules enabled, and configure
-  `svelte-check` to fail on a11y warnings ([conventions.md](conventions.md) D1). Add a lightweight
+  `svelte-check` to fail on a11y warnings ([conventions.md](../design/conventions.md) D1). Add a lightweight
   no-hardcoded-string check for markup text (eslint rule or a small script; scope as SHOULD if no
   clean off-the-shelf rule fits) to enforce D2.
 - **Verify:** `pnpm check && pnpm lint && pnpm build` green; in `tauri dev` the page shows the app
@@ -104,9 +104,9 @@ feature work begins.
 
 - `settings.json` schema + load/migrate via `tauri-plugin-store`; a `Settings` struct
   with the Phase-1 defaults (from
-  [ops.md § Settings schema](ops.md#settings-schema-phase-1)) and a `version` field +
+  [ops.md § Settings schema](../design/ops.md#settings-schema-phase-1)) and a `version` field +
   a no-op v1 migration scaffold.
-- Seed the format round-trip fixture pattern ([conventions.md](conventions.md) G1): a
+- Seed the format round-trip fixture pattern ([conventions.md](../design/conventions.md) G1): a
   `tests/fixtures/` set of prior-format files + a test that loads each through the migration path.
   M0 covers `settings.json`; later milestones extend it to project files as those formats land.
 - **Verify:** first launch writes defaults; unknown keys preserved on round-trip; the fixture
@@ -122,7 +122,7 @@ placeholders) and real content can be added incrementally through M7.
   Node build step); add `docs/public/` and `docs/resources/` to `.gitignore`.
   `docs/hugo.toml` sets `title = "Vocalboard"`, `baseURL = "/"`, and
   `theme = "hextra"`.
-- **Content directory tree** (mirrors [ops.md § Repository layout](ops.md#repository-layout)):
+- **Content directory tree** (mirrors [ops.md § Repository layout](../design/ops.md#repository-layout)):
   - `docs/content/reference/_index.md` — placeholder ("User reference manual — to be
     written in M7")
   - `docs/content/settings/_index.md` — placeholder linking to the settings schema in
@@ -170,7 +170,7 @@ placeholders) and real content can be added incrementally through M7.
   ubuntu/windows/macos), `python-tests` (`pytest`, `pip-audit`), `frontend-tests`
   (`pnpm check` / `lint` / `test` / `build`).
 - Widen `python-tests` and `frontend-tests` from ubuntu-only to the
-  ubuntu/windows/macos matrix the `rust-tests` job uses ([conventions.md](conventions.md) M1).
+  ubuntu/windows/macos matrix the `rust-tests` job uses ([conventions.md](../design/conventions.md) M1).
 - Seed one trivial test per language so runners aren't empty.
 - **Sidecar integration test in `rust-tests`:** `cargo test --workspace` includes
   `core::task::tests::sidecar_start_and_ping`, which requires a working Python

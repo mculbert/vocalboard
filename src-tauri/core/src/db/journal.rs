@@ -14,10 +14,10 @@ pub(crate) struct SnapshotRow {
     /// Hash of the snapshot blob this row points to.
     pub hash: Hash,
     /// Command-type enum code that produced the row.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub command_id: i64,
     /// Creation time, POSIX seconds UTC.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub applied_at: i64,
 }
 
@@ -29,10 +29,10 @@ pub(crate) struct DeltaRow {
     /// Version-prefixed postcard `Vec<Delta>` payload.
     pub payload: Vec<u8>,
     /// Command-type enum code that produced the row.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub command_id: i64,
     /// Creation time, POSIX seconds UTC.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub applied_at: i64,
 }
 
@@ -41,16 +41,16 @@ pub(crate) struct DeltaRow {
 /// and the history view may treat the two row types differently.
 #[derive(Debug)]
 pub(crate) struct MetaRow {
-    /// Row id. Read by the history-view feature (Step 12+).
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    /// Row id. Read by the history-view feature.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub id: i64,
     /// Hash of the metadata blob this row points to.
     pub hash: Hash,
     /// Raw command-type code; map via `CommandId::from_code` at a higher layer.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub command_id: i64,
     /// Creation time, POSIX seconds UTC.
-    #[allow(dead_code)] // Step 12+: history view will read this.
+    #[allow(dead_code)] // Reserved for the history-view feature.
     pub applied_at: i64,
 }
 

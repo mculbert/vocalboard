@@ -238,7 +238,7 @@ impl From<JournalError> for ReplayError {
 /// Flatten `trees` into a [`Snapshot`] in `track_id` order (ready for `encode_snapshot`).
 ///
 /// Pure: no DB I/O. The engine calls this on a frozen clone before writing via
-/// `encode_snapshot` + `store::put` + a `type = 1` journal append (Step 9).
+/// `encode_snapshot` + `store::put` + a `type = 1` journal append.
 pub(crate) fn snapshot_from_trees(trees: &PerTrackTrees) -> Snapshot {
     let tracks = trees
         .iter()

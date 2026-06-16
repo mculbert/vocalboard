@@ -1,5 +1,5 @@
 //! Tilable: the contract every tree-element type implements so the implicit
-//! timeline tree (Step 6) can be generic over Turn / Label.
+//! timeline tree can be generic over Turn / Label.
 
 /// Total contribution of this element to its track's timeline, in project-rate samples.
 ///

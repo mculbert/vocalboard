@@ -1,7 +1,7 @@
 # Phase 1 · M1 — Step 11: `ProjectState` engine + snapshot writer (`project/engine.rs`) — detailed action plan
 
 Detailed breakdown of [Step 11 in phase1-m1.md](phase1-m1.md#step-11--projectstate-engine--snapshot-writer-projectengeners).
-Authoritative behaviour specs: [data-model.md](data-model.md) (§ Write path, § Load / replay,
+Authoritative behaviour specs: [data-model.md](../design/data-model.md) (§ Write path, § Load / replay,
 § Batched (multi-element) edits, § Undo / redo, § Audio file resolution).
 
 This step assembles everything built in Steps 2–10 into the **`ProjectState` engine** — the single
@@ -98,8 +98,8 @@ wires it to the webview.
 ## Where Step 11 sits in the edit pipeline (context)
 
 A turn-mutating command flows through three layers (see
-[data-model.md § Batched edits](data-model.md#batched-multi-element-edits) and
-[§ Undo / redo](data-model.md#undo--redo)):
+[data-model.md § Batched edits](../design/data-model.md#batched-multi-element-edits) and
+[§ Undo / redo](../design/data-model.md#undo--redo)):
 
 1. **Command (M4/M5)** — computes *what* the new element(s)/metadata are. Not in M1.
 2. **`apply_batch` applier (this step)** — the **producer**. Mutates working clones of the touched
@@ -276,7 +276,7 @@ row); the app-exit trigger uses the same path.
 ### `apply_batch(&mut self, ops, category) -> Result<(), EngineError>` — the producer (Step 11b)
 
 `ops` is a synthetic edit description (a small test-facing type; real semantics arrive in M4/M5).
-Per [data-model.md § Batched edits](data-model.md#batched-multi-element-edits):
+Per [data-model.md § Batched edits](../design/data-model.md#batched-multi-element-edits):
 
 1. Work on clones of the touched `TrackTree`s. **Apply ops in descending sample order** over
    *original-tree-coordinate* positions, so earlier edits don't shift the positions of later ones.
@@ -313,7 +313,7 @@ re-resolve samples against it mid-batch. Resolve *everything* against the origin
 
 #### Why descending order (and what "original coordinate" means)
 
-[data-model.md § Batched edits](data-model.md#batched-multi-element-edits) (the rationale is pinned
+[data-model.md § Batched edits](../design/data-model.md#batched-multi-element-edits) (the rationale is pinned
 at data-model.md line ~311): applying highest-sample-first means every already-applied op lies
 strictly to the right of the current one, so it cannot shift the current op's coordinate — original
 positions stay valid for the whole batch with no re-resolution. **Forward deltas are recorded in
@@ -362,7 +362,7 @@ positions the same way the tree does to avoid off-by-one mismatches.
 #### Write-cost of heavy edits (one transaction is the right default)
 
 Unlike the snapshot writer — which writes a hash-list only, because the element blobs are already in
-`store` from edit time ([data-model.md line ~305](data-model.md)) — `apply_batch` must persist a
+`store` from edit time ([data-model.md line ~305](../design/data-model.md)) — `apply_batch` must persist a
 **brand-new blob per touched element** inside the command transaction (content changed ⇒ new hash, so
 `INSERT OR IGNORE` gives no dedup benefit). A "touches every turn" edit (e.g. a future
 `remove_disfluencies` over the whole project) therefore approaches a full-store rewrite at write time.
@@ -410,7 +410,7 @@ from a fresh snapshot with no trailing deltas to replay. **Rejected — use the 
 snapshot trigger instead.** Rationale (recorded here per the no-ADR model):
 
 - **It breaks the Step 10 undo invariant.** The undo model is built on *delta inverses* —
-  "[full snapshots are no longer used as inverses](data-model.md)" (data-model.md line ~438); every
+  "[full snapshots are no longer used as inverses](../design/data-model.md)" (data-model.md line ~438); every
   `UndoEntry` carries a forward+inverse `Delta` pair. A snapshot-only edit produces neither, so it
   would be either non-undoable (a sharp exception to "everything is undoable") or would have to
   reconstruct the inverse delta batch anyway — at which point all the delta-construction work is done
@@ -480,8 +480,8 @@ configured value to `History::new` — **no special handling here, and the backe
 ⚠️ The **user-facing warning** belongs to the settings dialog, which lands in **M3** (not this
 step): entering `0` there must trigger a confirmation dialog so the user explicitly acknowledges
 that undo will be disabled. That requirement is recorded in
-[`design/frontend.md`](frontend.md) (settings dialog bullet) and in
-[data-model.md § Undo / redo](data-model.md#undo--redo). Nothing for Step 11 to build —
+[`design/frontend.md`](../design/frontend.md) (settings dialog bullet) and in
+[data-model.md § Undo / redo](../design/data-model.md#undo--redo). Nothing for Step 11 to build —
 this note exists so the engine author does not "helpfully" clamp or reject `0`.
 
 ## Dead-code cleanup
@@ -714,7 +714,7 @@ This supersedes 11b's hardcoded `metadata_changed: false`; the `apply_batch` det
 
 **Scope boundary — what stays M5.** 11d adds only the *producer capability* + synthetic tests. The
 actual `add_track`/`remove_track` **commands** (the callers) and the **load-time tree↔metadata
-reconciliation guard** ([data-model.md § Load](data-model.md), line ~380) with its round-trip
+reconciliation guard** ([data-model.md § Load](../design/data-model.md), line ~380) with its round-trip
 fixtures remain M5. Because reconciliation does not exist yet, **11d's synthetic metadata tests must
 use changes that do not orphan a tree** (e.g. a `ProjectMeta` field like project name, or a
 speaker-name change) — never a `remove_track`-shaped edit that drops a `TrackMeta` while leaving its
@@ -831,13 +831,13 @@ and now also proves the producer's forward/inverse capture survives a reopen + u
 
 ## Documentation touches
 
-- Behaviour is already specified in [data-model.md](data-model.md); no spec change is expected. If
+- Behaviour is already specified in [data-model.md](../design/data-model.md); no spec change is expected. If
   implementation forces a field/behaviour adjustment, update `data-model.md` **in the same commit**
   (it stays authoritative).
 - Doc-comment the `engine.rs` module header with: the producer/consumer split, the
   "undo is a forward-recorded edit" invariant, the single-writer + lock-free-handoff constraint, and
   the open-recovery contract.
-- The M3 undo-limit-zero warning note has already been added to [`frontend.md`](frontend.md) as a
+- The M3 undo-limit-zero warning note has already been added to [`frontend.md`](../design/frontend.md) as a
   cross-doc consistency edit accompanying this plan (see [§ Undo limit = 0](#undo-limit--0)).
 
 ## Out of scope (deferred)
@@ -846,7 +846,7 @@ and now also proves the producer's forward/inverse capture survives a reopen + u
   can't be exercised end-to-end; recorded under M5 in [phase1.md](phase1.md)).
 - **Tauri handlers + TS contract → [Step 12](phase1-m1.md#step-12--tauri-wiring--contract).**
 - **G1 fixture round-trip → [Step 13](phase1-m1.md#step-13--g1-round-trip-fixture--final-pass).**
-- **Settings/preferences UI (incl. the undo-limit-zero confirmation) → M3** ([frontend.md](frontend.md)).
+- **Settings/preferences UI (incl. the undo-limit-zero confirmation) → M3** ([frontend.md](../design/frontend.md)).
 - **Missing-Files dialog UI + migration-consent/read-only open → M6** (M1 returns the missing-track
   list and runs migrations unconditionally; the dialogs land later — see the deferral note at the
   end of [phase1-m1.md](phase1-m1.md)).
@@ -854,4 +854,4 @@ and now also proves the producer's forward/inverse capture survives a reopen + u
 - **`add_track`/`remove_track` commands + load-time tree↔metadata reconciliation guard + their
   round-trip fixtures → M5.** 11d ([§ Step 11d detailed](#step-11d-detailed-apply_batch-metadata-producer))
   adds the *producer* support for combined tree+metadata edits and metadata-only edits; the commands
-  themselves and the reconciliation guard ([data-model.md § Load](data-model.md)) remain M5.
+  themselves and the reconciliation guard ([data-model.md § Load](../design/data-model.md)) remain M5.

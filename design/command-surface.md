@@ -72,7 +72,7 @@ Opens an existing project sqlite file, loads the latest snapshot, and applies th
 ```
 **Source:** `frontend`
 
-> **Forward note (M6):** v1 runs any pending schema migrations automatically. Migration is one-way (the file becomes unreadable to older app versions), so M6 introduces a user-consent step: either an added `mode` param (`migrate` | `read_only` | `probe`) — handled compatibly under H1 — or a paired `probe_project` command that returns `(user_version, target_user_version, needs_migration)` without mutating, with `open_project` gaining a `mode` to commit to one of the paths. The engine also grows a read-only mode that refuses every state-mutating command for the session. See [data-model.md § Schema version](data-model.md#schema-version) and [phase1.md § M6](phase1.md#m6--frontend-scaffolds-against-mocked-commands-from-m0-matures-alongside-m4m5).
+> **Forward note (M6):** v1 runs any pending schema migrations automatically. Migration is one-way (the file becomes unreadable to older app versions), so M6 introduces a user-consent step: either an added `mode` param (`migrate` | `read_only` | `probe`) — handled compatibly under H1 — or a paired `probe_project` command that returns `(user_version, target_user_version, needs_migration)` without mutating, with `open_project` gaining a `mode` to commit to one of the paths. The engine also grows a read-only mode that refuses every state-mutating command for the session. See [data-model.md § Schema version](data-model.md#schema-version).
 
 ---
 
@@ -493,6 +493,7 @@ Returns the current (in-memory) task queue. Read-only; not journaled.
 | `low_confidence_transcript` | Transcription rejected; avg_logprob below threshold |
 | `file_not_found` | Source audio file could not be located |
 | `export_unsupported_format` | File extension not recognized |
+| `audio_io_error` | Audio device/engine unavailable, or a read/write on the audio path failed (`play_from`/`pause`/`stop` when no device is open) |
 | `cancelled` | Task was cancelled by user |
 | `sidecar_not_ready` | Python sidecar did not start within timeout |
 | `unknown_command` | Command name not recognized by the sidecar / unsupported message type |

@@ -2,9 +2,9 @@
 
 Per-step action plan for Step 8 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Snapshot blob](data-model.md#snapshot-blob),
-[§ Load / replay](data-model.md#load--replay), and
-[§ Hashing and serialization](data-model.md#serialization). This step closes the
+[data-model.md § Snapshot blob](../design/data-model.md#snapshot-blob),
+[§ Load / replay](../design/data-model.md#load--replay), and
+[§ Hashing and serialization](../design/data-model.md#serialization). This step closes the
 persistence loop: it lays down the **`Snapshot` blob** (the vec-flattened
 per-track transcript), the **replay path** that reconstructs the in-memory
 per-track trees from the latest snapshot plus the deltas journaled after it, and
@@ -53,7 +53,7 @@ engine (Step 11):
   that step anticipated.
 
 The data flow this step implements (per track), from
-[data-model.md § Load / replay](data-model.md#load--replay):
+[data-model.md § Load / replay](../design/data-model.md#load--replay):
 
 ```
 latest type=1 row ─► snapshot hash ─► store::get ─► load_snapshot ─► Vec<(track_id, Vec<Hash>)>
@@ -99,7 +99,7 @@ pub mod v1 { pub struct SnapshotV1 { pub tracks: Vec<(u32, Vec<Hash>)> } }
 `store_snapshot` is `encode_tagged(Kind::Snapshot, LATEST_SNAPSHOT_VERSION,
 &v1::SnapshotV1::from(snap))`; `load_snapshot` is a byte-for-byte copy of
 `load_turn` with `Kind::Snapshot` substituted. This is a **new persisted
-format**, so per the data-integrity invariant ([conventions.md](conventions.md)
+format**, so per the data-integrity invariant ([conventions.md](../design/conventions.md)
 G1 / [CLAUDE.md](../CLAUDE.md)) it ships pinned-bytes + pinned-hash tests in this
 step, and the Step 13 G1 fixture round-trips a real snapshot blob by
 construction.
@@ -814,8 +814,8 @@ J8. **`deltas_after_empty_when_none_follow`** — only a snapshot row, no later
 ## Documentation touches
 
 - **`data-model.md`** — no changes required. The
-  [§ Snapshot blob](data-model.md#snapshot-blob) and
-  [§ Load / replay](data-model.md#load--replay) sections already describe the
+  [§ Snapshot blob](../design/data-model.md#snapshot-blob) and
+  [§ Load / replay](../design/data-model.md#load--replay) sections already describe the
   `Snapshot` struct and the four-step replay this plan implements
   field-for-field and step-for-step.
 - **`phase1-m1.md` Step 8 bullet** — add the cross-reference line (matching the
@@ -841,7 +841,7 @@ J8. **`deltas_after_empty_when_none_follow`** — only a snapshot row, no later
 - **The journal append/write path** — `db/journal.rs` ships read helpers only;
   row insertion is Step 9. Step 8 tests insert rows with raw SQL.
 - **Metadata (`type = -1`) loading** — separate from replay
-  ([data-model.md § Non-timeline data](data-model.md#non-timeline-data));
+  ([data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data));
   Step 9.
 - **The engine's recover-vs-refuse decision and the recoverable-error surface to
   the UI** — Step 11. Step 8 provides the two independent load primitives and
@@ -868,9 +868,9 @@ J8. **`deltas_after_empty_when_none_follow`** — only a snapshot row, no later
 - `cargo test -p core` — confirms no regression from the new `pub mod snapshot;`
   / `mod journal;` lines.
 - Manual diff review of `snapshot.rs` against
-  [data-model.md § Load / replay](data-model.md#load--replay) for step-for-step
+  [data-model.md § Load / replay](../design/data-model.md#load--replay) for step-for-step
   correspondence, and of the `Snapshot` struct against
-  [§ Snapshot blob](data-model.md#snapshot-blob).
+  [§ Snapshot blob](../design/data-model.md#snapshot-blob).
 - One commit on `claude/1M1`, **unsigned** per the GPG-by-branch policy in
   [CLAUDE.md](../CLAUDE.md). Suggested subject:
   `1M1-08: snapshot blob + replay + journal read side`. Bundles

@@ -10,13 +10,13 @@ The project is persisted with a **git-style content-addressed store plus an appe
 
 Schema versioning uses SQLite's built-in `PRAGMA user_version`. The application maintains a list of numbered up-migration SQL scripts (e.g., `migrations/0001_initial.sql`, `migrations/0002_*.sql`). On open, Rust reads `PRAGMA user_version`, applies any pending migrations in order, and writes the new version back. Down-migrations are not supported; older apps that encounter a `user_version` higher than their own maximum refuse to open the file with a clear error message referencing `min_app_version`.
 
-**Migration requires explicit user consent** (M6 onward). Running a migration is one-way: a file once opened under a newer schema can no longer be opened by an older app version. So when `open_project` detects pending migrations, the engine surfaces the prior and target `user_version` values to the frontend instead of migrating; the Welcome / Open flow shows a dialog with three choices: **Cancel**, **Open read-only** (mount the file without running migrations — the engine refuses every state-mutating command for the session), or **Migrate and open** (run the migrations and proceed). M1 ships `open_project` v1 with the migrate-and-open path only; the consent flow and the read-only mode land with the M6 open flow (see [phase1.md § M6](phase1.md#m6--frontend-scaffolds-against-mocked-commands-from-m0-matures-alongside-m4m5) and the `open_project` forward note in [command-surface.md](command-surface.md#open_project-v1)).
+**Migration requires explicit user consent** (M6 onward). Running a migration is one-way: a file once opened under a newer schema can no longer be opened by an older app version. So when `open_project` detects pending migrations, the engine surfaces the prior and target `user_version` values to the frontend instead of migrating; the Welcome / Open flow shows a dialog with three choices: **Cancel**, **Open read-only** (mount the file without running migrations — the engine refuses every state-mutating command for the session), or **Migrate and open** (run the migrations and proceed). M1 ships `open_project` v1 with the migrate-and-open path only; the consent flow and the read-only mode land with the M6 open flow (see the `open_project` forward note in [command-surface.md](command-surface.md#open_project-v1)).
 
 Because blobs in the `store` are serialized with **postcard** (not self-describing — see [§ Serialization](#serialization)), schema migrations that change the shape of a serialized struct cannot rely on field names. Every blob is therefore prefixed with a one-byte **format tag** whose low nibble encodes the format version (see [§ Serialization](#serialization) for the tag layout). **Lazy migration** keeps old-format blobs readable forever: per-version deserializers stay in the codebase indefinitely; blobs are re-serialized in the new format only when their content is genuinely edited. A read-only open therefore performs zero rewrite work, and a project that has been partially edited under a new format will contain a mix of old- and new-format blobs — mixed-version stores are normal and correct. A future opt-in **compact** operation (post-M1) is the escape valve for normalizing a mixed-version store on user request.
 
 **Two independent version axes.** Format evolution moves along two separate axes: the **SQLite `user_version`** (the table DDL below, bumped by a numbered `migrations/000N_*.sql`) and the per-blob **format-tag nibble** (the postcard shape of each `mod v1` wire struct — turn, label, splice, word, snapshot, metadata, delta). They change independently: a blob-shape change does **not** touch `user_version`, and a DDL change does not touch the blob tags. Phase 1 is expected to ride at `user_version = 1` throughout (M2–M7 add no tables — timeline and metadata live in blobs; recording-track tables are Phase 3); the blob shapes, by contrast, *do* fill in over Phase 1 (real splices in M2, real words in M4/M5).
 
-**Pre-1.0 the shapes are not yet frozen.** All of Phase 1 ships before any public release, so no project files exist outside internal testing. Until 1.0, a wire struct whose shape proves wrong MAY be revised **in place** within its `mod v1` — *without* adding a `mod v2`, bumping the format-tag nibble, or retaining the old deserializer. Each such revision MUST regenerate the pinned wire-byte/hash tests and any committed G1 round-trip fixtures (e.g. the `1M1-13` fixture — see [phase1-m1-13.md](phase1-m1-13.md)), and SHOULD raise `min_app_version` so stale dev/internal files written under the old shape are refused cleanly rather than silently mis-decoded by the revised reader ([conventions.md § G2](conventions.md#g-data--persistence-integrity)). The same disposability applies to the SQLite schema: pre-1.0, prefer editing `0001_initial.sql` in place over shipping a `0002_*.sql`. **At first release the v1 shapes (and the `user_version = 1` DDL) freeze.** From then on the lazy-migration mechanism above governs every change — a new `mod v2` with the old deserializer kept indefinitely and a `From<…V2>` upgrade, while committed fixtures are *kept* (a new vN fixture added alongside), never regenerated.
+**Pre-1.0 the shapes are not yet frozen.** All of Phase 1 ships before any public release, so no project files exist outside internal testing. Until 1.0, a wire struct whose shape proves wrong MAY be revised **in place** within its `mod v1` — *without* adding a `mod v2`, bumping the format-tag nibble, or retaining the old deserializer. Each such revision MUST regenerate the pinned wire-byte/hash tests and any committed G1 round-trip fixtures (e.g. the project fixture exercised by `src-tauri/core/tests/fixture_roundtrip.rs`), and SHOULD raise `min_app_version` so stale dev/internal files written under the old shape are refused cleanly rather than silently mis-decoded by the revised reader ([conventions.md § G2](conventions.md#g-data--persistence-integrity)). The same disposability applies to the SQLite schema: pre-1.0, prefer editing `0001_initial.sql` in place over shipping a `0002_*.sql`. **At first release the v1 shapes (and the `user_version = 1` DDL) freeze.** From then on the lazy-migration mechanism above governs every change — a new `mod v2` with the old deserializer kept indefinitely and a `From<…V2>` upgrade, while committed fixtures are *kept* (a new vN fixture added alongside), never regenerated.
 
 ### Schema DDL (Phase 1, user_version = 1)
 
@@ -148,7 +148,13 @@ struct Turn {
     // list and delta `location` references unambiguous.
     id:                u64,
     speaker_id:        Option<u64>,   // None = the "[None]" non-speech pseudo-speaker
-    turn_duration:     i64,           // integer samples at project rate
+    // A turn BEGINS at its first word's (refined) onset — the turn origin O =
+    // words[0].source_onset_sample, fixed at import (the first word is the one word
+    // refined eagerly, hence O never moves later). turn_duration + post_turn_silence
+    // is the gap to the NEXT turn's origin and is exact at import (consecutive
+    // first-word onsets); the speech-vs-silence SPLIT between them is approximate until
+    // the last word is refined lazily. No pre-roll: turn-relative position 0 == O.
+    turn_duration:     i64,           // speech extent, integer samples at project rate
     post_turn_silence: i64,           // gap to the next turn, project-rate samples
     words:             Vec<Word>,
     splices:           Vec<Splice>,   // embedded, not a table reference (see below)
@@ -158,18 +164,27 @@ struct Word {
     word_type:          WordType,   // Normal | Disfluency | Sound
     text:               String,
     // APPROXIMATE position in the SOURCE audio file (seconds), from the WhisperX
-    // forced alignment. Used for display and to seed turn_offset_sample at creation.
+    // forced alignment. Used for display and to seed source_onset_sample at creation.
     start_sec:          f64,
     end_sec:            f64,
     is_cut:             bool,
     is_muted:           bool,
-    // Position and length WITHIN this turn, integer samples at the project rate.
-    // At turn creation, turn_offset_sample is derived from the approximate WhisperX
-    // start_sec and length_samples is 0. When a cut/mute computes a zero-crossing
-    // for this word, both are updated to the precise word onset/offset (see
-    // audio-pipeline.md § Zero-crossing and crossfade).
-    turn_offset_sample: i64,
-    length_samples:     i64,
+    // Zero-crossing-accurate word ONSET as an absolute sample offset in the
+    // project-rate source/cache timeline (NOT turn-relative). It is STABLE across
+    // every edit — cutting a word never moves it — so a cut word still records exactly
+    // where to read its audio back on uncut (this is what lets uncut/unmute restore
+    // the original Source splice without "guessing" a position). The word's
+    // project-timeline position is DERIVED, never stored: it is the turn origin O plus
+    // (source_onset_sample - O), or equivalently the splice-offset sweep (§ Splices
+    // tile the turn). None = the zero-crossing has not been refined yet.
+    //
+    // Refinement is LAZY and per-SEAM: a word is refined only when it sits at a
+    // cut/mute boundary, at edit time — EXCEPT the first word of every turn, which is
+    // refined at IMPORT because the turn's origin O (and thus the turn boundaries; see
+    // the Turn comments) depends on it. length_samples is the precise word length once
+    // refined and an approximation ((end_sec - start_sec) * rate) before.
+    source_onset_sample: Option<i64>,
+    length_samples:      i64,
 }
 
 enum WordType {
@@ -195,8 +210,11 @@ struct Splice {
 // constructed nonsensically (no Option<i64> juggling for non-Source splices).
 enum SpliceKind {
     Source {
-        source_start_sample:  i64, // sample offset in the source file's own rate
-        source_decode_offset: i64, // resampled samples to discard before playback
+        // Absolute sample offset into the project-rate source/cache timeline (the
+        // resampled FLAC cache is at the project rate; the renderer seeks the cache to
+        // this value). Same units as Word::source_onset_sample, so uncut/unmute can
+        // hand a word's onset straight to a restored Source splice.
+        source_start_sample: i64,
     },
     RoomTone,
     Silence,
@@ -247,7 +265,7 @@ Labels have **no splices and no audio fields**. Track 0 has no audio source — 
 
 ### Time representation
 
-All durations and positions in the tree are **integer samples at the project sample rate**. Float timestamps (`start_sec`, `end_sec`) are stored only for the original source-file positions in `Word`; everything else is integer samples.
+All durations and positions in the tree are **integer samples at the project sample rate**. Float timestamps (`start_sec`, `end_sec`) are stored only for the *approximate* original source-file positions in `Word`; everything else is integer samples. `Word::source_onset_sample` is an `Option<i64>` — `None` until its zero-crossing is refined (lazy; see above) — but is integer samples when present.
 
 Sample fields are nominally **non-negative**; the structs use `i64` rather than `u64` so the temporal-query math (`T - left_subtree_sum`, predecessor/successor accumulation) can use natural signed arithmetic — the ≥0 invariant is enforced at command-schema boundaries (`"minimum": 0` on sample params) and constructor `debug_assert!`s, not in the type system. One bit of headroom at 48 kHz still covers ~6 million years of sample positions; the practical loss is zero.
 
@@ -289,7 +307,7 @@ Objects in `store` are serialized with **postcard/Serde** and keyed by **BLAKE3 
 
 Content addressing requires **deterministic serialization** — the same logical object must always produce the same bytes. All hashed structs therefore use ordered collections only (`Vec`, `BTreeMap`); never `HashMap`, whose iteration order is unspecified.
 
-Every blob in `store` is prefixed with a one-byte **format tag** that encodes both the object kind (high nibble) and the format version (low nibble): `tag = (kind << 4) | version`. The assigned kind codes are: Turn = `0x1`, Metadata = `0x2`, Snapshot = `0x3`, RoomTonePcm = `0x4`, Embedding = `0x5`, Label = `0x6`. This gives 16 version slots per kind (versions 0–15); the two-byte tag extension is the documented escape path if either ceiling is reached. For example, a Turn at format version 1 carries tag byte `0x11`, and a Label V1 carries `0x61`. The hash covers the **full tagged bytes** (tag ++ postcard payload), so two blobs with identical postcard content but different tags produce different hashes — ensuring blobs of different kinds or versions are always distinguished.
+Every blob in `store` is prefixed with a one-byte **format tag** that encodes both the object kind (high nibble) and the format version (low nibble): `tag = (kind << 4) | version`. The assigned kind codes are: Turn = `0x1`, Metadata = `0x2`, Snapshot = `0x3`, RoomTone = `0x4`, Embedding = `0x5`, Label = `0x6`. This gives 16 version slots per kind (versions 0–15); the two-byte tag extension is the documented escape path if either ceiling is reached. For example, a Turn at format version 1 carries tag byte `0x11`, and a Label V1 carries `0x61`. The hash covers the **full tagged bytes** (tag ++ postcard payload), so two blobs with identical postcard content but different tags produce different hashes — ensuring blobs of different kinds or versions are always distinguished.
 
 ### Turn and Label blobs
 
@@ -414,20 +432,20 @@ struct ProjectMeta {
 struct TrackMeta {
     id, name, source_type,                 // 'file' | 'recording' (Phase 3)
     source_path_relative, source_path_absolute,
-    resampled_path:           Option<String>, // → resampled/<track>.flac; null until resample completes
     codec, source_sample_rate, source_channels,
     project_start_sample,
-    original_length_samples,                  // full track length, in project samples
-    cut_length_samples,                       // length after cuts, in project samples
+    original_length_samples,               // full track length, in project samples
+    cut_length_samples,                    // length after cuts, in project samples
     drift_ppm,
-    room_tone_hash:           Option<Hash>,   // → store blob (resampled f32 PCM)
-    room_tone_length_samples: Option<i64>,
-    models_used:              ModelUse,       // per-role model identifier (see below)
-    enhanced_path:            Option<String>,
-    wet_dry_ratio:            f32,            // persisted per-track enhance mix; NOT set by enhance_track
-    disfluencies_identified:  bool,
+    room_tone_hash:          Option<Hash>, // → store blob (RoomTone PCM, content-addressed)
+    models_used:             ModelUse,     // per-role model identifier (see below)
+    wet_dry_ratio:           f32,          // persisted per-track enhance mix; NOT set by enhance_track
+    disfluencies_identified: bool,
     created_at, updated_at,
 }
+// Derived (not persisted): resampled path = resampled/<track_id>.flac (always derivable from
+// track_id). Room-tone sample length = decoded from the store blob via room_tone_hash.
+// Enhanced audio path = resolved at export time from settings, not stored in metadata.
 
 // The model applied to a track per role. The role set is fixed (it mirrors the
 // settings `model_paths` roles) and each model is applied to a track at most
@@ -483,8 +501,10 @@ The `<project>.vbdata/` directory contains:
 
 | Path pattern | Contents |
 |---|---|
-| `enhanced/<track_name>-enhanced.flac` | MP-SENet output for a given track |
-| `resampled/<track_name>.flac` | Source audio resampled to the project rate (24-bit FLAC), written at import; regenerated on open if missing |
+| `enhanced/<track_id>-enhanced.flac` | MP-SENet output for a given track |
+| `resampled/<track_id>.flac` | Source audio resampled to the project rate (24-bit FLAC), written at import; regenerated on open if missing |
+
+**Derived-cache files are keyed by the stable `TrackMeta.id` (the `u32` from `next_track_id`), not the track name.** The id is unique by construction and never reassigned, so the cache survives renames without orphaning and needs no filesystem-name sanitization (distinct names can otherwise sanitize to a colliding string). Track names *are* enforced unique at the command layer (`track_name_duplicate`), but they are mutable and not filesystem-safe, so they are unsuitable as a cache key. Users who need to locate a cache file on disk find the id in the track info dialog.
 
 User-requested exports are written directly to the user-chosen path and are **not** cached in `.vbdata/` (export is infrequent and caching would just double disk use).
 
@@ -513,3 +533,7 @@ App-level settings (not per-project) are stored via `tauri-plugin-store` in a `s
 - `snapshot_idle_seconds`: autosave idle interval (default: 30)
 - `model_idle_unload_seconds`: Python sidecar model unload timeout (default: 300)
 - `resampling_quality`: `balanced` | `high` | `highest` (maps to rubato sinc parameters)
+- `room_tone_rms_ceiling`: absolute RMS ceiling (linear amplitude, default 0.0316 ≈ −30 dBFS) above which audio is never treated as room tone (see [audio-pipeline.md § Room tone detection](audio-pipeline.md#room-tone-detection))
+- `room_tone_quiet_percentile`: percentile (0–100) of 100 ms block RMS forming the adaptive quiet threshold (default 5); the effective threshold is `min(room_tone_rms_ceiling, this percentile of block RMS)`
+- `splice_search_window_ms`: outward search radius (ms) for cut/mute boundary refinement — the zero-crossing search scans up to this far before a word onset / after a word offset (default 20; see [audio-pipeline.md § Zero-crossing and crossfade](audio-pipeline.md#zero-crossing-and-crossfade))
+- `splice_crossfade_ms`: length (ms) of the crossfade at a splice seam (recorded as the splice's fade length; rendered as a centered equal-power overlay — see [audio-pipeline.md § Zero-crossing and crossfade](audio-pipeline.md#zero-crossing-and-crossfade)); also the local-RMS analysis window of the zero-crossing search (the two are equal by design; default 2)

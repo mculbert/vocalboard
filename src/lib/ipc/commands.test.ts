@@ -1,6 +1,18 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { mockIPC, clearMocks } from '@tauri-apps/api/mocks';
-import { getAppInfo, newProject, openProject, pingSidecar, saveSnapshotNow } from './commands.js';
+import {
+	exportMixed,
+	exportTrack,
+	exportTranscript,
+	getAppInfo,
+	newProject,
+	openProject,
+	pause,
+	pingSidecar,
+	playFrom,
+	saveSnapshotNow,
+	stop
+} from './commands.js';
 import type { AppInfoResult, NewProjectResult, OpenProjectResult, PingResult } from './types';
 
 afterEach(() => {
@@ -81,5 +93,133 @@ describe('saveSnapshotNow', () => {
 		});
 		await saveSnapshotNow();
 		expect(capturedArgs).toEqual({ params: {} });
+	});
+});
+
+describe('playFrom', () => {
+	it('invokes play_from with start_sample and a null end_sample by default', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'play_from') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await playFrom(48000n);
+		expect(capturedArgs).toEqual({ params: { start_sample: 48000n, end_sample: null } });
+	});
+
+	it('forwards an explicit end_sample', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'play_from') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await playFrom(0n, 96000n);
+		expect(capturedArgs).toEqual({ params: { start_sample: 0n, end_sample: 96000n } });
+	});
+});
+
+describe('pause / stop', () => {
+	it('invokes pause with empty params', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'pause') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await pause();
+		expect(capturedArgs).toEqual({ params: {} });
+	});
+
+	it('invokes stop with empty params', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'stop') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await stop();
+		expect(capturedArgs).toEqual({ params: {} });
+	});
+});
+
+describe('exportTrack', () => {
+	it('defaults format to flac and mono to false', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'export_track') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await exportTrack(2, '/tmp/out.flac');
+		expect(capturedArgs).toEqual({
+			params: { track_id: 2, output_path: '/tmp/out.flac', format: 'flac', mono: false }
+		});
+	});
+
+	it('forwards an explicit format and mono', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'export_track') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await exportTrack(1, '/tmp/out.wav', 'wav', true);
+		expect(capturedArgs).toEqual({
+			params: { track_id: 1, output_path: '/tmp/out.wav', format: 'wav', mono: true }
+		});
+	});
+});
+
+describe('exportMixed', () => {
+	it('defaults format to flac and mono to false', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'export_mixed') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await exportMixed('/tmp/mix.flac');
+		expect(capturedArgs).toEqual({
+			params: { output_path: '/tmp/mix.flac', format: 'flac', mono: false }
+		});
+	});
+});
+
+describe('exportTranscript', () => {
+	it('defaults format to vtt and include_cut_words to false', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'export_transcript') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await exportTranscript('/tmp/t.vtt');
+		expect(capturedArgs).toEqual({
+			params: { output_path: '/tmp/t.vtt', format: 'vtt', include_cut_words: false }
+		});
+	});
+
+	it('forwards markdown format and include_cut_words', async () => {
+		let capturedArgs: unknown;
+		mockIPC((cmd, args) => {
+			if (cmd === 'export_transcript') {
+				capturedArgs = args;
+				return null;
+			}
+		});
+		await exportTranscript('/tmp/t.md', 'markdown', true);
+		expect(capturedArgs).toEqual({
+			params: { output_path: '/tmp/t.md', format: 'markdown', include_cut_words: true }
+		});
 	});
 });

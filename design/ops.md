@@ -5,6 +5,7 @@
 ```
 vocalboard/
 ├── design/                 Technical design documents (this folder)
+├── plans/                  Phase milestone action plans (phase*.md; see design/index.md § Implementation plans)
 ├── docs/                   Hugo documentation site
 │   ├── hugo.toml
 │   └── content/
@@ -278,6 +279,8 @@ The body includes: app version, OS, and last 50 lines of both log files, HTML-en
   "gpu_enabled": false,
   "snapshot_idle_seconds": 30,
   "model_idle_unload_seconds": 300,
+  "room_tone_rms_ceiling": 0.0316,
+  "room_tone_quiet_percentile": 5.0,
   "update_feed_url": null,
   "recent_projects": []
 }

@@ -10,15 +10,18 @@ pub mod bindings;
 pub mod commands;
 pub mod envelope;
 pub mod error;
+pub mod events;
 pub mod sidecar;
 
 pub use commands::{
-    AppInfoParams, AppInfoResult, NewProjectParams, NewProjectResult, OpenProjectParams,
-    OpenProjectResult, PingParams, PingResult, RecoveryReport, SaveSnapshotNowParams,
-    SidecarStatus,
+    AppInfoParams, AppInfoResult, AudioFormat, ExportMixedParams, ExportTrackParams,
+    ExportTranscriptParams, NewProjectParams, NewProjectResult, OpenProjectParams,
+    OpenProjectResult, PauseParams, PingParams, PingResult, PlayFromParams, RecoveryReport,
+    SaveSnapshotNowParams, SidecarStatus, StopParams, TranscriptFormat,
 };
 pub use envelope::{CancelEnvelope, RequestEnvelope, ToSidecar};
 pub use error::{CommandError, ErrorCode};
+pub use events::{PlaybackStopped, PlayheadUpdate};
 pub use sidecar::{ErrorMsg, FromSidecar, LogLevel, LogMsg, ProgressMsg, ResultMsg};
 
 #[cfg(test)]
@@ -173,6 +176,160 @@ mod tests {
         assert!(serde_json::from_str::<NewProjectParams>(bad_new).is_err());
 
         Ok(())
+    }
+
+    // ── playback / export proto types ───────────────────────────────────────────
+
+    /// omitted optional fields deserialise to their documented defaults.
+    #[test]
+    fn audio_params_defaults_deserialise() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::commands::{
+            AudioFormat, ExportTrackParams, ExportTranscriptParams, PlayFromParams,
+            TranscriptFormat,
+        };
+
+        let play: PlayFromParams = serde_json::from_str(r#"{"start_sample":0}"#)?;
+        assert_eq!(play.start_sample, 0);
+        assert_eq!(play.end_sample, None);
+
+        let track: ExportTrackParams =
+            serde_json::from_str(r#"{"track_id":1,"output_path":"x.flac"}"#)?;
+        assert_eq!(track.track_id, 1);
+        assert_eq!(track.format, AudioFormat::Flac);
+        assert!(!track.mono);
+
+        let transcript: ExportTranscriptParams =
+            serde_json::from_str(r#"{"output_path":"x.vtt"}"#)?;
+        assert_eq!(transcript.format, TranscriptFormat::Vtt);
+        assert!(!transcript.include_cut_words);
+        Ok(())
+    }
+
+    /// `deny_unknown_fields` rejects an extra key on every playback / export param struct.
+    #[test]
+    fn audio_params_deny_unknown_fields() {
+        use crate::commands::{
+            ExportMixedParams, ExportTrackParams, ExportTranscriptParams, PauseParams,
+            PlayFromParams, StopParams,
+        };
+
+        assert!(serde_json::from_str::<PlayFromParams>(r#"{"start_sample":0,"bogus":1}"#).is_err());
+        assert!(serde_json::from_str::<PauseParams>(r#"{"bogus":1}"#).is_err());
+        assert!(serde_json::from_str::<StopParams>(r#"{"bogus":1}"#).is_err());
+        assert!(serde_json::from_str::<ExportTrackParams>(
+            r#"{"track_id":1,"output_path":"x.flac","bogus":1}"#
+        )
+        .is_err());
+        assert!(
+            serde_json::from_str::<ExportMixedParams>(r#"{"output_path":"x.flac","bogus":1}"#)
+                .is_err()
+        );
+        assert!(serde_json::from_str::<ExportTranscriptParams>(
+            r#"{"output_path":"x.vtt","bogus":1}"#
+        )
+        .is_err());
+    }
+
+    /// format enums round-trip snake_case; unknown strings error.
+    #[test]
+    fn format_enums_round_trip_snake_case() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::commands::{AudioFormat, TranscriptFormat};
+
+        for (s, f) in [
+            ("flac", AudioFormat::Flac),
+            ("wav", AudioFormat::Wav),
+            ("mp3", AudioFormat::Mp3),
+            ("ogg", AudioFormat::Ogg),
+            ("aac", AudioFormat::Aac),
+        ] {
+            assert_eq!(serde_json::to_string(&f)?, format!("\"{s}\""));
+            assert_eq!(serde_json::from_str::<AudioFormat>(&format!("\"{s}\""))?, f);
+        }
+        assert!(serde_json::from_str::<AudioFormat>(r#""flacc""#).is_err());
+
+        for (s, f) in [
+            ("vtt", TranscriptFormat::Vtt),
+            ("markdown", TranscriptFormat::Markdown),
+        ] {
+            assert_eq!(serde_json::to_string(&f)?, format!("\"{s}\""));
+            assert_eq!(
+                serde_json::from_str::<TranscriptFormat>(&format!("\"{s}\""))?,
+                f
+            );
+        }
+        assert!(serde_json::from_str::<TranscriptFormat>(r#""md""#).is_err());
+        Ok(())
+    }
+
+    /// `end_sample` accepts both `null` and an integer.
+    #[test]
+    fn play_from_end_sample_null_or_int() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::commands::PlayFromParams;
+
+        let none: PlayFromParams =
+            serde_json::from_str(r#"{"start_sample":10,"end_sample":null}"#)?;
+        assert_eq!(none.end_sample, None);
+
+        let some: PlayFromParams = serde_json::from_str(r#"{"start_sample":10,"end_sample":99}"#)?;
+        assert_eq!(some.end_sample, Some(99));
+        Ok(())
+    }
+
+    /// event payloads serialise to `{ "position_samples": n }`.
+    #[test]
+    fn event_payloads_serialise() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::events::{PlaybackStopped, PlayheadUpdate};
+
+        let update = PlayheadUpdate {
+            position_samples: 480,
+        };
+        assert_eq!(
+            serde_json::to_string(&update)?,
+            r#"{"position_samples":480}"#
+        );
+        let back: PlayheadUpdate = serde_json::from_str(r#"{"position_samples":7}"#)?;
+        assert_eq!(back.position_samples, 7);
+
+        let stopped = PlaybackStopped {
+            position_samples: 96000,
+        };
+        assert_eq!(
+            serde_json::to_string(&stopped)?,
+            r#"{"position_samples":96000}"#
+        );
+        Ok(())
+    }
+
+    /// `AudioError::error_key()` strings route to command codes.
+    #[test]
+    fn audio_error_key_maps_to_code() {
+        use crate::ErrorCode;
+
+        // The two frontend-facing audio codes in the command-surface table.
+        assert_eq!(
+            ErrorCode::from_audio_error_key("export_unsupported_format"),
+            ErrorCode::ExportUnsupportedFormat
+        );
+        assert_eq!(
+            ErrorCode::from_audio_error_key("audio_io_error"),
+            ErrorCode::AudioIoError
+        );
+        // Every other audio key folds to internal_error (no new codes beyond the table).
+        for key in [
+            "decode_unsupported_format",
+            "decode_failed",
+            "ffmpeg_unavailable",
+            "ffmpeg_failed",
+            "encode_failed",
+            "audio_device_error",
+            "something_unrecognised",
+        ] {
+            assert_eq!(
+                ErrorCode::from_audio_error_key(key),
+                ErrorCode::InternalError,
+                "key {key} should fold to internal_error"
+            );
+        }
     }
 
     #[test]
