@@ -1998,6 +1998,9 @@ mod integration_tests {
                 )
                 .unwrap();
             let cap = drive(&mut engine, end as usize, 333);
+            // Let the pre-roll thread observe the final frames_played and emit its
+            // interval updates before we stop (emission is scheduling-paced — see E12).
+            std::thread::sleep(Duration::from_millis(60));
             engine.stop();
             let ups = u.lock().unwrap().clone();
             (cap, ups)
