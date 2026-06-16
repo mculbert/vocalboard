@@ -60,8 +60,6 @@ pub struct TrackMeta {
     pub source_path_relative: String,
     /// Absolute path on disk at import time.
     pub source_path_absolute: String,
-    /// Path to the resampled copy, if one was created.
-    pub resampled_path: Option<String>,
     /// Audio codec identifier.
     pub codec: String,
     /// Source file's native sample rate.
@@ -78,12 +76,8 @@ pub struct TrackMeta {
     pub drift_ppm: f64,
     /// Hash of the room-tone PCM blob, if recorded.
     pub room_tone_hash: Option<Hash>,
-    /// Length of the room-tone recording in project-rate samples.
-    pub room_tone_length_samples: Option<i64>,
     /// Models applied to this track.
     pub models_used: ModelUse,
-    /// Path to the enhanced audio file, if enhancement was run.
-    pub enhanced_path: Option<String>,
     /// Wet/dry mix ratio for the enhancer output (0.0 = dry, 1.0 = wet).
     pub wet_dry_ratio: f32,
     /// Whether disfluency identification has been run on this track.
@@ -300,13 +294,13 @@ pub(crate) enum FileResolution {
     ),
     /// Relative path missing but the stored absolute path exists. Use it; the
     /// stored relative path SHOULD be rewritten (a metadata change). M1 surfaces
-    /// `new_relative` for the engine to act on later (deferred to Step 11 / M6).
+    /// `new_relative` for the engine to act on later (deferred to M6).
     FoundViaAbsolute {
         /// The resolved absolute path (surfaced by the Missing-Files dialog in M6).
         #[allow(dead_code)] // M6: Missing-Files dialog will read this path.
         path: PathBuf,
         /// The absolute path string to store as the new relative path until the
-        /// engine recomputes the true relative path (Step 11 / M6).
+        /// engine recomputes the true relative path (M6).
         new_relative: String,
     },
     /// Neither path resolved — the track has a missing source file.
@@ -398,8 +392,6 @@ pub mod v1 {
         pub source_path_relative: String,
         /// Absolute source path.
         pub source_path_absolute: String,
-        /// Resampled-copy path.
-        pub resampled_path: Option<String>,
         /// Audio codec identifier.
         pub codec: String,
         /// Source sample rate.
@@ -416,12 +408,8 @@ pub mod v1 {
         pub drift_ppm: f64,
         /// Room-tone blob hash.
         pub room_tone_hash: Option<Hash>,
-        /// Room-tone length in project-rate samples.
-        pub room_tone_length_samples: Option<i64>,
         /// Models applied to this track.
         pub models_used: ModelUseV1,
-        /// Enhanced audio path.
-        pub enhanced_path: Option<String>,
         /// Wet/dry ratio for the enhancer.
         pub wet_dry_ratio: f32,
         /// Whether disfluency identification has been run.
@@ -527,7 +515,6 @@ pub mod v1 {
                 source_type: SourceTypeV1::from(&v.source_type),
                 source_path_relative: v.source_path_relative.clone(),
                 source_path_absolute: v.source_path_absolute.clone(),
-                resampled_path: v.resampled_path.clone(),
                 codec: v.codec.clone(),
                 source_sample_rate: v.source_sample_rate,
                 source_channels: v.source_channels,
@@ -536,9 +523,7 @@ pub mod v1 {
                 cut_length_samples: v.cut_length_samples,
                 drift_ppm: v.drift_ppm,
                 room_tone_hash: v.room_tone_hash,
-                room_tone_length_samples: v.room_tone_length_samples,
                 models_used: ModelUseV1::from(&v.models_used),
-                enhanced_path: v.enhanced_path.clone(),
                 wet_dry_ratio: v.wet_dry_ratio,
                 disfluencies_identified: v.disfluencies_identified,
                 created_at: v.created_at.clone(),
@@ -555,7 +540,6 @@ pub mod v1 {
                 source_type: SourceType::from(v.source_type),
                 source_path_relative: v.source_path_relative,
                 source_path_absolute: v.source_path_absolute,
-                resampled_path: v.resampled_path,
                 codec: v.codec,
                 source_sample_rate: v.source_sample_rate,
                 source_channels: v.source_channels,
@@ -564,9 +548,7 @@ pub mod v1 {
                 cut_length_samples: v.cut_length_samples,
                 drift_ppm: v.drift_ppm,
                 room_tone_hash: v.room_tone_hash,
-                room_tone_length_samples: v.room_tone_length_samples,
                 models_used: ModelUse::from(v.models_used),
-                enhanced_path: v.enhanced_path,
                 wet_dry_ratio: v.wet_dry_ratio,
                 disfluencies_identified: v.disfluencies_identified,
                 created_at: v.created_at,
@@ -663,7 +645,6 @@ mod tests {
                 source_type: SourceType::File,
                 source_path_relative: "audio/host.wav".to_string(),
                 source_path_absolute: "/recordings/host.wav".to_string(),
-                resampled_path: None,
                 codec: "wav".to_string(),
                 source_sample_rate: 48000,
                 source_channels: 1,
@@ -672,7 +653,6 @@ mod tests {
                 cut_length_samples: 4800,
                 drift_ppm: 0.0,
                 room_tone_hash: Some(Hash([0xAA; 16])),
-                room_tone_length_samples: Some(24000),
                 models_used: ModelUse {
                     transcription: Some("whisperx-large-v3".to_string()),
                     vad: None,
@@ -681,7 +661,6 @@ mod tests {
                     sound_classification: None,
                     llm: None,
                 },
-                enhanced_path: None,
                 wet_dry_ratio: 0.8,
                 disfluencies_identified: true,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -841,7 +820,6 @@ mod tests {
             source_type: SourceType::File,
             source_path_relative: String::new(),
             source_path_absolute: String::new(),
-            resampled_path: None,
             codec: String::new(),
             source_sample_rate: 48000,
             source_channels: 1,
@@ -850,9 +828,7 @@ mod tests {
             cut_length_samples: 0,
             drift_ppm: 0.0,
             room_tone_hash: None,
-            room_tone_length_samples: None,
             models_used: ModelUse::default(),
-            enhanced_path: None,
             wet_dry_ratio: 0.0,
             disfluencies_identified: false,
             created_at: String::new(),
@@ -1202,7 +1178,6 @@ mod tests {
             source_type: SourceType::File,
             source_path_relative: relative.to_string(),
             source_path_absolute: absolute.to_string(),
-            resampled_path: None,
             codec: "wav".to_string(),
             source_sample_rate: 48000,
             source_channels: 1,
@@ -1211,9 +1186,7 @@ mod tests {
             cut_length_samples: 0,
             drift_ppm: 0.0,
             room_tone_hash: None,
-            room_tone_length_samples: None,
             models_used: ModelUse::default(),
-            enhanced_path: None,
             wet_dry_ratio: 0.0,
             disfluencies_identified: false,
             created_at: "2024-01-01T00:00:00Z".to_string(),
@@ -1222,26 +1195,26 @@ mod tests {
     }
 
     // Pinned wire bytes for sample_metadata(). Regenerate via capture_pinned_values.
-    const PINNED_WIRE_BYTES: [u8; 225] = [
+    const PINNED_WIRE_BYTES: [u8; 219] = [
         0x21, 0x01, 0x0a, 0x4d, 0x79, 0x20, 0x50, 0x72, 0x6f, 0x6a, 0x65, 0x63, 0x74, 0x01, 0x02,
         0x01, 0x02, 0x01, 0x01, 0x04, 0x48, 0x6f, 0x73, 0x74, 0x00, 0x0e, 0x61, 0x75, 0x64, 0x69,
         0x6f, 0x2f, 0x68, 0x6f, 0x73, 0x74, 0x2e, 0x77, 0x61, 0x76, 0x14, 0x2f, 0x72, 0x65, 0x63,
         0x6f, 0x72, 0x64, 0x69, 0x6e, 0x67, 0x73, 0x2f, 0x68, 0x6f, 0x73, 0x74, 0x2e, 0x77, 0x61,
-        0x76, 0x00, 0x03, 0x77, 0x61, 0x76, 0x80, 0xf7, 0x02, 0x01, 0x00, 0x80, 0xcc, 0x3a, 0x80,
-        0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
-        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x01, 0x80, 0xf7, 0x02,
-        0x01, 0x11, 0x77, 0x68, 0x69, 0x73, 0x70, 0x65, 0x72, 0x78, 0x2d, 0x6c, 0x61, 0x72, 0x67,
-        0x65, 0x2d, 0x76, 0x33, 0x00, 0x00, 0x01, 0x0a, 0x6d, 0x70, 0x73, 0x65, 0x6e, 0x65, 0x74,
-        0x2d, 0x76, 0x31, 0x00, 0x00, 0x00, 0xcd, 0xcc, 0x4c, 0x3f, 0x01, 0x14, 0x32, 0x30, 0x32,
-        0x34, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x31, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30,
-        0x30, 0x5a, 0x14, 0x32, 0x30, 0x32, 0x34, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x32, 0x54, 0x30,
-        0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x5a, 0x01, 0x01, 0x05, 0x41, 0x6c, 0x69, 0x63,
-        0x65, 0x01, 0x07, 0x23, 0x66, 0x66, 0x30, 0x30, 0x30, 0x30, 0x01, 0xbb, 0xbb, 0xbb, 0xbb,
-        0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0x02, 0x01, 0x02,
+        0x76, 0x03, 0x77, 0x61, 0x76, 0x80, 0xf7, 0x02, 0x01, 0x00, 0x80, 0xcc, 0x3a, 0x80, 0x4b,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0xaa, 0x01, 0x11, 0x77, 0x68, 0x69,
+        0x73, 0x70, 0x65, 0x72, 0x78, 0x2d, 0x6c, 0x61, 0x72, 0x67, 0x65, 0x2d, 0x76, 0x33, 0x00,
+        0x00, 0x01, 0x0a, 0x6d, 0x70, 0x73, 0x65, 0x6e, 0x65, 0x74, 0x2d, 0x76, 0x31, 0x00, 0x00,
+        0xcd, 0xcc, 0x4c, 0x3f, 0x01, 0x14, 0x32, 0x30, 0x32, 0x34, 0x2d, 0x30, 0x31, 0x2d, 0x30,
+        0x31, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x5a, 0x14, 0x32, 0x30, 0x32,
+        0x34, 0x2d, 0x30, 0x31, 0x2d, 0x30, 0x32, 0x54, 0x30, 0x30, 0x3a, 0x30, 0x30, 0x3a, 0x30,
+        0x30, 0x5a, 0x01, 0x01, 0x05, 0x41, 0x6c, 0x69, 0x63, 0x65, 0x01, 0x07, 0x23, 0x66, 0x66,
+        0x30, 0x30, 0x30, 0x30, 0x01, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb,
+        0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0xbb, 0x02, 0x01, 0x02,
     ];
     const PINNED_HASH: [u8; 16] = [
-        0xe5, 0x1f, 0x39, 0xba, 0x60, 0xfe, 0x9c, 0x0e, 0x55, 0x96, 0x6f, 0xd8, 0xa1, 0x6c, 0xc9,
-        0x5c,
+        0xd8, 0xd1, 0x30, 0x73, 0x4e, 0x26, 0x4a, 0xa9, 0x1e, 0x09, 0x5c, 0x94, 0x9a, 0x11, 0x21,
+        0x08,
     ];
 
     impl std::fmt::Debug for FileResolution {

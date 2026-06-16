@@ -46,6 +46,8 @@ pub enum ErrorCode {
     FileNotFound,
     /// The specified export file extension is not supported.
     ExportUnsupportedFormat,
+    /// The audio device/engine is unavailable, or a read/write on the audio path failed.
+    AudioIoError,
     /// Task was cancelled by the user.
     Cancelled,
     /// Python sidecar did not respond to the ready handshake within the startup timeout.
@@ -67,4 +69,24 @@ pub enum ErrorCode {
     /// An error code emitted by a newer component than this build understands.
     #[serde(other)]
     Unknown,
+}
+
+impl ErrorCode {
+    /// Map a `vb_core::audio::AudioError::error_key()` string to a command [`ErrorCode`].
+    ///
+    /// Proto carries no `vb_core` dependency, so the audio handlers route their typed
+    /// `AudioError` through this single key→code mapping. Two keys are frontend-facing codes in the
+    /// command-surface error table: `export_unsupported_format` (unknown export extension) and
+    /// `audio_io_error` (audio device unavailable / read-write failure on the audio path — what
+    /// `play_from`/`pause`/`stop` surface when no device is open). Every other audio key (decode,
+    /// ffmpeg, encode) folds to [`InternalError`](Self::InternalError) — **no new codes beyond the
+    /// table** (command-surface.md § Error codes). An unrecognised key also folds to
+    /// `InternalError` (it is an internal failure, never silently surfaced as `Unknown`).
+    pub fn from_audio_error_key(key: &str) -> Self {
+        match key {
+            "export_unsupported_format" => Self::ExportUnsupportedFormat,
+            "audio_io_error" => Self::AudioIoError,
+            _ => Self::InternalError,
+        }
+    }
 }

@@ -2,8 +2,8 @@
 
 Per-step action plan for Step 5 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Turn and Label blobs](data-model.md#turn-and-label-blobs)
-and [§ Schema DDL](data-model.md#schema-ddl-phase-1-user_version--1). This
+[data-model.md § Turn and Label blobs](../design/data-model.md#turn-and-label-blobs)
+and [§ Schema DDL](../design/data-model.md#schema-ddl-phase-1-user_version--1). This
 step lays down the **content-addressed blob-store plumbing**: a thin pair of
 functions over the `store` SQLite table that turn the `(Hash, Vec<u8>)`
 already produced by [Step 3](phase1-m1-03.md)'s `encode_tagged` and
@@ -64,7 +64,7 @@ is preserved by `store::get` re-hashing on read to detect bit-rot.
 
 - **`put` returns `bool` indicating "newly inserted" vs "already present".**
   The dedup invariant from
-  [data-model.md § Blob-and-tree persistence](data-model.md#blob-and-tree-persistence)
+  [data-model.md § Blob-and-tree persistence](../design/data-model.md#blob-and-tree-persistence)
   ("a byte-identical payload is stored exactly once, no matter how many
   snapshots or journal entries reference it") is testable as
   `put(h, b) == true` then `put(h, b) == false`. The engine doesn't act on
@@ -364,7 +364,7 @@ S12. **`empty_payload_round_trips`** — `put(conn, &hash_tagged(&[]), &[])`
   `store::get` and `load_turn` together). Step 5 ships only the
   byte-level primitives.
 - **A `compact` operation** to normalize mixed-version stores — deferred
-  past M1 per [data-model.md § Schema version](data-model.md#schema-version).
+  past M1 per [data-model.md § Schema version](../design/data-model.md#schema-version).
 - **Garbage collection** of unreferenced blobs — the persistent ID in
   every `Turn` / `Label` payload guarantees uniqueness, and dedup means
   re-derived blobs cost nothing, so unreferenced rows are rare and
@@ -377,8 +377,8 @@ S12. **`empty_payload_round_trips`** — `put(conn, &hash_tagged(&[]), &[])`
 
 - **No design doc changes are required.** Step 5 is a thin
   implementation of behaviour already specified in
-  [data-model.md § Turn and Label blobs](data-model.md#turn-and-label-blobs)
-  and [§ Blob-and-tree persistence](data-model.md#blob-and-tree-persistence).
+  [data-model.md § Turn and Label blobs](../design/data-model.md#turn-and-label-blobs)
+  and [§ Blob-and-tree persistence](../design/data-model.md#blob-and-tree-persistence).
   The phase1-m1.md Step 5 prose ("prepend the format tag, hash the tagged
   bytes") is mildly stale relative to the post-Step-3 reality (tagging and
   hashing now live in `encode_tagged`), but it's a description of the

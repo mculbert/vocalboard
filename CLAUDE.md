@@ -5,9 +5,13 @@ editing — podcasters, audiobooks, voiceover. Runs entirely locally. Tauri 2 (R
 shell) + Svelte 5 webview + a long-running Python ML sidecar.
 
 ## Status
-**M0 (scaffolding & contracts) complete** — the three-crate Rust workspace, IPC
-contract, sidecar round-trip, settings, and CI skeleton are in place. **M1 (core
-persistence & timeline engine) is next** (`design/phase1-m1.md`).
+**M0 (scaffolding & contracts)** and **M1 (core persistence & timeline engine)**
+complete — the three-crate Rust workspace, IPC contract, content-addressed blob store
++ append-only journal, immutable timeline tree, undo/redo, and snapshots are in place.
+**M2 (audio engine) is in progress** (`plans/phase1-m2.md`): Steps 1–3 (deps, decode +
+probe, resample + FLAC cache) are landed; Steps 4–11 (room tone, edit primitives, EDL
+cursor + renderer, playback, export, Tauri wiring) are planned in `plans/phase1-m2-04.md`
+… `phase1-m2-11.md`. M2 runs in parallel with M3 (Python sidecar & ML).
 
 ## Source of truth
 - **`design/` is authoritative.** Start at `design/index.md`; per-area docs cover
@@ -15,11 +19,14 @@ persistence & timeline engine) is next** (`design/phase1-m1.md`).
   ops, sequence-diagrams.
 - **`requirements.md` is the original brainstorm and is NOT kept in sync** with later
   decisions — defer to `design/` on any conflict.
-- Roadmap: `design/phase1.md` (milestones M0–M7).
+- **Action/roadmap plans live in `plans/` (`phase*.md`), separate from the `design/` TDD.**
+  Plans reference the TDD and one another; the TDD and code must not reference plans (see
+  `design/conventions.md` § E4). The plan index is the *Implementation plans* table in `design/index.md`.
+- Roadmap: `plans/phase1.md` (milestones M0–M7).
 - When a decision changes, **update the relevant `design/` doc** instead of letting
   docs drift, and keep cross-doc references consistent.
 - When implementation leaves a deliberate shortcut or stub, **immediately update the
-  affected downstream milestone in the relevant `design/phase*.md`**
+  affected downstream milestone in the relevant `plans/phase*.md`**
   before closing the commit — don't rely on code comments alone to surface it later.
 
 ## Architectural invariants (do not violate)
@@ -88,5 +95,5 @@ persistence & timeline engine) is next** (`design/phase1-m1.md`).
 - **Push only when asked.** When you do push: `claude/*` branches go to the `history` remote
   (`vocalboard-dev`); all other branches (incl. feature branches) go to `origin` (`vocalboard`).
 - **Pre-commit checklist:** before running `git commit`, confirm: (1) if this diff
-  leaves any shortcut, stub, or deferred item, the relevant `design/phase*.md` is
+  leaves any shortcut, stub, or deferred item, the relevant `plans/phase*.md` is
   also staged with the downstream milestone updated.

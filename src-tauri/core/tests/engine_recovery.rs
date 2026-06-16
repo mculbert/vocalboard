@@ -1,4 +1,4 @@
-//! Integration tests: `ProjectState` corrupt-journal recovery (Step 11a).
+//! Integration tests: `ProjectState` corrupt-journal recovery.
 //!
 //! Tests here verify the open-recovery contract: a corrupt `type = 0` journal row
 //! causes `open_project` to fall back to the latest snapshot, and a corrupt

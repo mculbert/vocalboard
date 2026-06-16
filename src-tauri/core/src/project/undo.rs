@@ -1,7 +1,7 @@
 //! Undo/redo machinery for the project editor.
 //!
 //! # Producer / consumer split
-//! The engine (`apply_batch`, Step 11) is the **producer**: it builds an
+//! The engine (`apply_batch`) is the **producer**: it builds an
 //! [`UndoEntry`] from a real edit and calls [`History::record`]. This module
 //! is the **consumer**: [`History::undo`] / [`History::redo`] swap the live
 //! `Arc<TimelineState>` and append the inverse/forward journal effect so that
@@ -28,7 +28,7 @@ use crate::project::metadata::{encode_metadata, Metadata};
 use crate::project::snapshot::PerTrackTrees;
 
 /// The complete undoable project state: the per-track timeline trees and the
-/// non-timeline metadata. Held behind an `Arc` by the engine (Step 11) and by
+/// non-timeline metadata. Held behind an `Arc` by the engine and by
 /// each `UndoEntry`; an edit builds a new value and swaps the `Arc`. Cloning is
 /// cheap — the `PerTrackTrees` spine + `Metadata` struct are small, and tree
 /// subtrees stay `Arc`-shared (large metadata binaries are referenced by hash).
@@ -329,7 +329,6 @@ mod tests {
             source_type: SourceType::File,
             source_path_relative: String::new(),
             source_path_absolute: String::new(),
-            resampled_path: None,
             codec: "wav".to_string(),
             source_sample_rate: 48000,
             source_channels: 1,
@@ -338,9 +337,7 @@ mod tests {
             cut_length_samples: 0,
             drift_ppm: 0.0,
             room_tone_hash: None,
-            room_tone_length_samples: None,
             models_used: ModelUse::default(),
-            enhanced_path: None,
             wet_dry_ratio: 0.0,
             disfluencies_identified: false,
             created_at: "2024-01-01T00:00:00Z".to_string(),

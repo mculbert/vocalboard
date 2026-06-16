@@ -1,8 +1,8 @@
-//! Integration tests: `ProjectState` lifecycle round-trip (Step 11a).
+//! Integration tests: `ProjectState` lifecycle round-trip.
 //!
 //! Tests here drive only the public API: `new_project`, `open_project`,
 //! `save_snapshot_now`, `undo`, `redo`. State manipulation via `apply_batch`
-//! (Step 11b) is exercised in the 11b extension of this file.
+//! is exercised later in this file.
 
 use tempfile::tempdir;
 use vb_core::project::engine::ProjectState;

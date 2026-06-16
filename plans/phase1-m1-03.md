@@ -2,7 +2,7 @@
 
 Per-step action plan for Step 3 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md](data-model.md). This step lays down the content-addressing
+[data-model.md](../design/data-model.md). This step lays down the content-addressing
 primitives — 16-byte BLAKE3-128 hash and format-tagged postcard serialization —
 under a **lazy migration** scheme: old-format blobs stay readable forever via
 per-version deserializers, and re-serialization only happens when a blob's
@@ -10,7 +10,7 @@ content is genuinely edited.
 
 **Definition of done:** `core/src/project/hash.rs` exposes `Hash`, `Kind`, the
 tag-byte helpers, and generic `encode_tagged` / `decode_tagged` with full unit
-coverage; [data-model.md](data-model.md) and [phase1-m1.md](phase1-m1.md) are
+coverage; [data-model.md](../design/data-model.md) and [phase1-m1.md](phase1-m1.md) are
 updated to describe lazy migration and the kind+version tag-byte layout;
 `cargo test`, `cargo clippy -D warnings`, and `cargo fmt --check` are all green.
 
@@ -77,7 +77,7 @@ and writers belong with their structs in later steps.
 
 ## Sub-steps
 
-### 3a — Update [`design/data-model.md`](data-model.md)
+### 3a — Update [`design/data-model.md`](../design/data-model.md)
 
 Three surgical edits:
 

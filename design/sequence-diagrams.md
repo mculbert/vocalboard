@@ -88,10 +88,10 @@ User          Svelte UI          Rust (audio thread)      cpal
   │                │                    │  baked in), merge  │
   │                │                    │  tracks            │
   │                │                    │                    │
-  │                │                    │  open cpal stream  │
-  │                │                    ├───────────────────►│
-  │                │                    │  start pre-roll    │
-  │                │                    │  thread            │
+  │                │                    │ start pre-roll     │
+  │                │                    │ thread (cpal stream│
+  │                │                    │ already open from  │
+  │                │                    │ project open)      │
   │                │                    │                    │
   │  every ~50ms:  │◄──playhead_update──│                    │
   │  current word  │  position_samples  │ (pre-roll fills    │
@@ -102,16 +102,19 @@ User          Svelte UI          Rust (audio thread)      cpal
   │─────────────►  │                    │                    │
   │                │  invoke pause      │                    │
   │                ├───────────────────►│                    │
-  │                │                    │  drain ring buffer │
-  │                │                    │  close cpal stream │
-  │                │                    ├──────────────────x │
+  │                │                    │ stop pre-roll      │
+  │                │                    │ thread; retain     │
+  │                │                    │ position (stream   │
+  │                │                    │ stays open)        │
   │                │                    │                    │
-  │                │◄──playback_stopped─│                    │
+  │                │◄──playhead_update──│                    │
   │                │  position_samples  │                    │
   │                │                    │                    │
-  │  cursor set    │                    │                    │
-  │  to last word  │                    │                    │
+  │  cursor at the │                    │                    │
+  │  paused word   │                    │                    │
 ```
+
+> **Pause vs. stop.** The `cpal` stream is opened **once at project open** and reused across every play/stop cycle (see [audio-pipeline.md § Output stream](audio-pipeline.md#output-stream)) — it is *not* opened per `play_from` or closed per `pause`. Pause (above) retains the played position and keeps the stream open for resume; it does **not** emit `playback_stopped`. That event fires only on **Stop** or **natural end** (`end_sample` / end-of-EDL reached), where Rust maps the final playhead to the nearest word and moves the cursor there.
 
 ---
 

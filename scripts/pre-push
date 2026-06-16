@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Project pre-push checks for Vocalboard.
+#
+# The last local gate before sharing — runs the slower CI suites in full
+# (.github/workflows/ci.yml). No area scoping: a push can carry many commits and
+# the generated-bindings layer couples Rust↔TS, so partial runs would miss
+# cross-cutting breakage. Excludes what only CI can/should do: the cross-OS
+# matrix, network audits (cargo deny / pip-audit / pnpm audit), the
+# core/sidecar-integration feature, and pnpm build.
+#
+# This script contains NO signing or branch-push policy — those are personal git
+# hook concerns, not project requirements. Wire them into your local hook.
+#   Rust     → cargo doc broken-link lint, cargo test --workspace
+#   Frontend → pnpm check (svelte-check), pnpm test (vitest)
+#   Python   → pytest
+
+set -uo pipefail
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+fail=0
+
+report() { if [ "$1" -eq 0 ]; then echo "  ✓ $2"; else echo "  ✗ $2"; fail=1; fi; }
+run_in() {
+  local dir="$1" label="$2"; shift 2
+  echo "── $label"
+  ( cd "$ROOT/$dir" && "$@" )
+  report $? "$label"
+}
+
+run_in src-tauri "cargo doc (broken-link lint)" \
+  env RUSTDOCFLAGS="-D rustdoc::broken_intra_doc_links" cargo doc --no-deps --workspace
+run_in src-tauri "cargo test" cargo test --workspace
+run_in .         "pnpm check" pnpm check
+run_in .         "pnpm test"  pnpm test
+run_in python    "pytest"     uv run pytest
+
+if [ "$fail" -ne 0 ]; then
+  echo "❌ pre-push checks failed — fix the above before pushing."
+  exit 1
+fi
+exit 0

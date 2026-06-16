@@ -25,9 +25,11 @@ Vocalboard is a cross-platform desktop audio editor built on Tauri 2 (Rust shell
 
 | Plan | File | What it covers |
 |------|------|----------------|
-| Phase 1 roadmap | [phase1.md](phase1.md) | Dependency-ordered build plan for Phase 1 (milestones M0–M7) |
-| M0 action plan | [phase1-m0.md](phase1-m0.md) | Step-by-step scaffolding & contracts plan for the M0 milestone |
-| M1 action plan | [phase1-m1.md](phase1-m1.md) | Step-by-step persistence & timeline engine plan for the M1 milestone |
+| Phase 1 roadmap | [phase1.md](../plans/phase1.md) | Dependency-ordered build plan for Phase 1 (milestones M0–M7) |
+| M0 action plan | [phase1-m0.md](../plans/phase1-m0.md) | Step-by-step scaffolding & contracts plan for the M0 milestone |
+| M1 action plan | [phase1-m1.md](../plans/phase1-m1.md) | Step-by-step persistence & timeline engine plan for the M1 milestone |
+| M2 action plan | [phase1-m2.md](../plans/phase1-m2.md) | Step-by-step audio-engine plan (decode/resample, EDL, playback, export, cut/mute primitives) for the M2 milestone |
+| M3 action plan | [phase1-m3.md](../plans/phase1-m3.md) | Step-by-step Python sidecar & ML plan (registry, dispatcher, WhisperX/MP-SENet/Gemma/YAMnet) for the M3 milestone |
 
 ## Key architectural decisions
 
@@ -37,7 +39,7 @@ Vocalboard is a cross-platform desktop audio editor built on Tauri 2 (Rust shell
 | Python sidecar lifecycle | Long-running process, lazy model load, idle-unload | Avoids 5–30 s cold-start for repeated ML tasks while managing RAM on resource-constrained machines |
 | IPC transport | Tauri stdio NDJSON with stdin control channel | Zero port-collision risk, Tauri-native lifetime management, simple to log and replay |
 | Audio playback | Rust native: Symphonia + cpal + rubato | Deterministic latency; same engine for preview and export; no webview audio fragility |
-| Audio decoding | Symphonia for audio; bundled ffmpeg for video/AAC fallback | Pure-Rust fast path for the common case; ffmpeg only loaded when needed |
+| Audio decoding | Symphonia for audio (incl. AAC-LC/M4A); bundled ffmpeg for HE-AAC/Opus/AC-3 + video fallback | Pure-Rust fast path for the common case; ffmpeg only loaded when needed |
 | Project persistence | SQLite with PRAGMA user_version migrations + min_app_version | Industry-proven file format; versioned migrations; older apps refuse incompatible projects cleanly |
 | Timeline persistence | Git-style content-addressed blob store + append-only delta journal, with periodic snapshots | An unchanged turn is stored once across all snapshots; mirrors the in-memory structural-sharing tree, so snapshots are cheap |
 | Serialization | Bincode/Serde for stored blobs | Compact and fast for the many snapshots/blobs the journal produces; content-addressing already precludes eyeballing blobs, so JSON's inspectability buys nothing here |
@@ -100,4 +102,4 @@ Vocalboard is a cross-platform desktop audio editor built on Tauri 2 (Rust shell
 
 **VBDATA** — The `<project>.vbdata/` directory co-located with the project's `.vocalboard` sqlite file. Contains derived files: enhanced audio FLACs and the resampled-source cache.
 
-**word** — A transcribed token with *approximate* source-audio start/end timestamps (from WhisperX), project-rate `turn_offset_sample` / `length_samples` (refined to the precise zero-crossing on cut/mute), a text label, and boolean cut/muted flags. Each word is its own `<span tabindex="-1">` in the UI.
+**word** — A transcribed token with *approximate* source-audio start/end timestamps (from WhisperX), a project-rate `source_onset_sample` (an absolute source/cache offset, `Option` — refined to the precise zero-crossing lazily on cut/mute, or at import for a turn's first word) and `length_samples`, a text label, and boolean cut/muted flags. Each word is its own `<span tabindex="-1">` in the UI.

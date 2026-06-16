@@ -1,10 +1,10 @@
 # Phase 1 · M1 — Step 12: Tauri wiring + contract — detailed action plan
 
 Detailed breakdown of [Step 12 in phase1-m1.md](phase1-m1.md#step-12--tauri-wiring--contract).
-Authoritative specs: [command-surface.md](command-surface.md) (the three project commands + the
-error-code table), [conventions.md](conventions.md) (§ C error handling, § D2 i18n,
+Authoritative specs: [command-surface.md](../design/command-surface.md) (the three project commands + the
+error-code table), [conventions.md](../design/conventions.md) (§ C error handling, § D2 i18n,
 § H1 contract versioning, § J2 param validation),
-[architecture.md § Rust process](architecture.md#rust-process-tauri) (the per-window
+[architecture.md § Rust process](../design/architecture.md#rust-process-tauri) (the per-window
 `ProjectState`), and the engine API from [Step 11](phase1-m1-11.md) (`core/src/project/engine.rs`).
 
 Step 11 produced the headless engine (`ProjectState`, no Tauri dependency). Step 12 is the
@@ -336,7 +336,7 @@ flags for M4/M5 heavy edits:
   already depends on `tokio` with `rt`).
 - `new_project`/`open_project` **replace** any project in the slot (single window in Phase 1; the
   prior `ProjectState` drops). The newtype keeps Phase 6's second-window-second-`ProjectState`
-  shape open ([architecture.md § Rust process](architecture.md#rust-process-tauri)).
+  shape open ([architecture.md § Rust process](../design/architecture.md#rust-process-tauri)).
 - **No `unwrap`/`expect`/`panic`** in non-test code: lock-poison → `InternalError`; join error →
   `InternalError`.
 
@@ -507,7 +507,7 @@ export async function saveSnapshotNow(): Promise<void> {
 - **Commit `1M1-12c: ProjectState command wiring + version-by-name & param-validation conventions`**
   — stage `proto/src/{commands.rs,lib.rs}`, `app/src/main.rs`, `src/lib/ipc/{commands.ts,
   commands.test.ts}`, the regenerated `types.ts`, `design/{command-surface.md,conventions.md}`
-  (H1 + J2 reconciliations, deferred-schemars note), and `design/phase1.md` (the schemars deferral
+  (H1 + J2 reconciliations, deferred-schemars note), and `plans/phase1.md` (the schemars deferral
   under M4/M5).
 
 ---

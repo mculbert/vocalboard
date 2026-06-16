@@ -44,6 +44,55 @@ that read differently per language say so explicitly.
   ```
   Surviving mutants MUST be triaged to zero or annotated with why they are acceptable (e.g.
   genuinely equivalent mutants). This is a periodic [review] gate, not a CI blocker.
+- **A4 [review].** Any edit *executed* in one coordinate system but *persisted and replayed* in
+  another — Vocalboard's recurring case: a timeline edit applied by integer **sample** yet journaled
+  as a hash-anchored **`Location`** (`After(predecessor)`) and rebuilt by replay — is a
+  **translate-and-replay seam** and MUST be tested, beyond the in-memory result, for:
+  - **Boundary translation** — empty container, single element, position-0 / `Start`, and the
+    **append/end boundary** (one-past-the-last element, where half-open `[start, end)` vs an inclusive
+    endpoint creates an off-by-one and the two coordinate systems disagree).
+  - **Batch order + its inverse** — a batch of ≥2 *interacting* edits on the **same** container,
+    resolved against the **frozen original** (never the half-mutated working copy), then **undone**,
+    asserting the inverse batch replays correctly (inverse order = reverse of forward order).
+  - **Durable round-trip as the load-bearing assertion** — reload / replay-from-persistence MUST
+    equal live state, and the test MUST NOT take an intervening snapshot that would store the correct
+    in-memory state and mask a wrong delta. A divergence here is silent until reopen — user **data
+    loss** (see [§ G](#g-data--persistence-integrity)).
+
+  Plan-doc test enumerations for such code MUST list these cases by name. Origin: the
+  `apply_batch` round-trip tests in `src-tauri/core/src/project/engine.rs`.
+- **A5 [review].** Mutation testing (A3) and design review exist partly to surface edge-case
+  *classes* we did not know to enumerate. When a surviving mutant or review finding reveals a
+  missing-test pattern that **generalizes** beyond the immediate code (not a one-off gap), the durable
+  fix is to **promote it to a named testing convention** (a new A-series entry, as **A4** was) and
+  cite it from the affected plan-doc test plans — so future implementations inherit the case instead
+  of re-discovering it. Patching only the local test leaves the next seam unguarded.
+- **A6 [review]. Mutation-resistant assertions.** For the A1 core (sample/timeline/arithmetic
+  logic), the *assertion* — not just the call — MUST be sensitive to a wrong operator, index, or
+  boundary. Recurring first-pass gaps the M2 `cargo-mutants` sweep surfaced (origin: `notes/test/`
+  reports), to apply proactively when writing new tests:
+  - **Independent oracle.** Derive expected values from *outside* the function under test — a
+    hand-computed golden constant or an independently-written reference loop — never by calling the
+    function or re-using its own formula. A same-source expectation mutates in lockstep and catches
+    nothing (e.g. computing the expected fade gain by calling the fade-gain function).
+  - **Distinct fixtures, not constants.** Use per-frame / per-channel **distinct** data (ramps), so a
+    wrong frame/channel/stride index reads a *different* value. Constant or uniform fixtures hide
+    index / offset / interleave (`*ch`) errors — every position holds the same value.
+  - **Odd values on boundaries.** Exercise `⌈x/2⌉` / `⌊x/2⌋` (ceil/floor) and parity logic with
+    **odd** inputs at the boundary; even/round numbers collapse `(x+1)/2 == x/2` and mask the operator.
+  - **Exact value and position, not shape.** Assert the value at each index; length, `Found`/`None`,
+    and `L == R` are necessary but never sufficient.
+  - **Mirror implementations.** Parallel impls (e.g. an owned `'static` iterator beside a borrowed
+    one) MUST each be asserted, or asserted to **agree** via a differential test.
+  - **Branch *shape*, not just branch input.** To make a boundary branch (`<` vs `<=`) observable,
+    construct the *structure* that exposes the off-by-one (e.g. a tree node that actually has a left
+    subtree), not merely an input at the boundary value.
+  - **Don't game it; lift logic instead.** Equivalent mutants (redundant guards, `with_capacity`
+    hints, symmetric math, read-coalescing optimisations), timeout artifacts (loop-control), and
+    unviable (generics) are expected — annotate per A3, do not contort a test to "kill" them. Where
+    behaviour is hidden behind a hardware/IO boundary (untestable headless), extract the decision rule
+    into a **pure function** and test that (e.g. a device-config-match predicate lifted out of the
+    cpal backend).
 
 ## B. Code quality
 
@@ -102,6 +151,21 @@ that read differently per language say so explicitly.
   capability or a visible behavior change. Relationship to `design/`: **`design/` is the
   engineering spec (how it is built); `reference/` is the end-user manual (how it is used)** — they
   are not duplicates.
+- **E4 [review].** Planning docs and the authoritative spec are separate trees, and cross-references
+  flow **one way**. Action/roadmap plans live in `plans/` (`phase*.md`); the engineering spec (the
+  TDD) lives in `design/`.
+  - Plan docs MAY reference one another freely and SHOULD anchor each step to the `design/`
+    section(s) it implements (link as `../design/<doc>.md#section`).
+  - The TDD MUST NOT reference plan docs — the **sole exception** is the *Implementation plans* table
+    in [index.md](index.md), which links into `../plans/`. A reference that would otherwise point at
+    a plan instead points at the relevant TDD section or the implemented source file.
+  - Code comments **and test names** MUST NOT reference plan docs or plan **step identifiers**
+    (e.g. `Step 10`, `11a`, `M2 Step 11`); cite the authoritative `design/` doc — its section
+    anchors such as `J2`/`H1` are fine — or the source file. (The test suite's per-test-case ID
+    prefixes — e.g. `fn t1_…`, `// E19 — …` — mirror a plan's *Test cases* enumeration as a coverage
+    mnemonic; these are a tolerated legacy convention and out of scope for this rule for now.) A soft
+    `scripts/pre-commit` check warns on likely step/doc references but never blocks (heuristic;
+    review is the backstop).
 
 ## F. Architectural invariants (pointer, not restatement)
 

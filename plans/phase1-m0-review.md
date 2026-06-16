@@ -109,7 +109,7 @@ contract instead of overloading a human-readable log line:
      `test_make_log_msg_defaults` uses `"sidecar ready"` as sample text only — keep or
      adjust as appropriate).
 
-**Note on docs.** `design/phase1.md:75-76` tracks the M3 deferral that startup currently
+**Note on docs.** `plans/phase1.md:75-76` tracks the M3 deferral that startup currently
 blocks on `rx.recv()`; that deferral is unaffected — only the readiness *signal* changes.
 
 ### W4 [L] — Prevent orphaned sidecar processes
@@ -253,7 +253,7 @@ Whenever `proto` types change (W1, W3):
 1. Contract + sidecar (W1, W2, W3, W5, W4) + regenerated `types.ts` + `command-surface.md`.
 2. CI hardening (C1, C2, C3, C4, C5).
 3. Frontend/assets (F1, F2).
-Stage the relevant `design/phase*.md` updates with whichever commit touches them
+Stage the relevant `plans/phase*.md` updates with whichever commit touches them
 (per CLAUDE.md pre-commit checklist).
 
 ## Verification (end-to-end)

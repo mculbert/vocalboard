@@ -2,6 +2,8 @@ notes/
 
 # Rust
 target/
+mutants.out/
+mutants.out.old/
 
 # Node / frontend
 node_modules/

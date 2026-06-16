@@ -27,8 +27,28 @@ pub const DEFAULT_MODEL_IDLE_UNLOAD_SECONDS: u64 = 300;
 /// Default maximum number of undoable edits retained in memory.
 pub const DEFAULT_UNDO_HISTORY_LIMIT: usize = 50;
 
+/// Default absolute RMS ceiling for room-tone detection (linear amplitude,
+/// ≈ −30 dBFS). Audio louder than this is never treated as room tone; it is the
+/// same constant the zero-crossing search clamps "quiet" to.
+pub const DEFAULT_ROOM_TONE_RMS_CEILING: f32 = 0.0316;
+
+/// Default percentile (0–100) of 100 ms block RMS used as the adaptive quiet
+/// threshold in room-tone detection. The effective threshold is
+/// `min(room_tone_rms_ceiling, this-percentile-of-block-RMS)`.
+pub const DEFAULT_ROOM_TONE_QUIET_PERCENTILE: f64 = 5.0;
+
+/// Default outward search radius (ms) for the cut/mute boundary refinement —
+/// the zero-crossing search scans up to this far before a word's onset (and
+/// after its offset) for a clean low-energy boundary.
+pub const DEFAULT_SPLICE_SEARCH_WINDOW_MS: f64 = 20.0;
+
+/// Default length (ms) of the linear crossfade applied at a splice seam. The
+/// same length doubles as the local-RMS analysis window of the zero-crossing
+/// search (the two are deliberately equal).
+pub const DEFAULT_SPLICE_CROSSFADE_MS: f64 = 2.0;
+
 /// Sinc-resampler quality preset (maps to rubato interpolation parameters).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ResamplingQuality {
     /// Balanced speed/quality trade-off.
@@ -102,6 +122,26 @@ pub struct Settings {
     /// Maximum number of undoable edits retained in memory (oldest evicted past this).
     #[serde(default = "default_undo_history_limit")]
     pub undo_history_limit: usize,
+    /// Absolute RMS ceiling (linear amplitude, ≈ −30 dBFS) above which audio is
+    /// never treated as room tone. Gates the room-tone window search and, with
+    /// `room_tone_quiet_percentile`, the stitch-fallback / no-tone determination.
+    #[serde(default = "default_room_tone_rms_ceiling")]
+    pub room_tone_rms_ceiling: f32,
+    /// Percentile (0–100) of 100 ms block RMS forming the adaptive quiet threshold
+    /// for room-tone detection; the effective threshold is
+    /// `min(room_tone_rms_ceiling, this percentile of block RMS)`.
+    #[serde(default = "default_room_tone_quiet_percentile")]
+    pub room_tone_quiet_percentile: f64,
+    /// Outward search radius (ms) for cut/mute boundary refinement: the
+    /// zero-crossing search scans up to this far before a word onset / after a
+    /// word offset for a clean low-energy boundary (default 20).
+    #[serde(default = "default_splice_search_window_ms")]
+    pub splice_search_window_ms: f64,
+    /// Length (ms) of the linear crossfade at a splice seam; also the local-RMS
+    /// analysis window of the zero-crossing search (the two are equal by design;
+    /// default 2).
+    #[serde(default = "default_splice_crossfade_ms")]
+    pub splice_crossfade_ms: f64,
     /// Paths to recently-opened project files, most-recent first.
     #[serde(default)]
     pub recent_projects: Vec<PathBuf>,
@@ -122,6 +162,18 @@ fn default_model_idle_unload_seconds() -> u64 {
 fn default_undo_history_limit() -> usize {
     DEFAULT_UNDO_HISTORY_LIMIT
 }
+fn default_room_tone_rms_ceiling() -> f32 {
+    DEFAULT_ROOM_TONE_RMS_CEILING
+}
+fn default_room_tone_quiet_percentile() -> f64 {
+    DEFAULT_ROOM_TONE_QUIET_PERCENTILE
+}
+fn default_splice_search_window_ms() -> f64 {
+    DEFAULT_SPLICE_SEARCH_WINDOW_MS
+}
+fn default_splice_crossfade_ms() -> f64 {
+    DEFAULT_SPLICE_CROSSFADE_MS
+}
 
 impl Default for Settings {
     fn default() -> Self {
@@ -137,6 +189,10 @@ impl Default for Settings {
             model_idle_unload_seconds: DEFAULT_MODEL_IDLE_UNLOAD_SECONDS,
             update_feed_url: None,
             undo_history_limit: DEFAULT_UNDO_HISTORY_LIMIT,
+            room_tone_rms_ceiling: DEFAULT_ROOM_TONE_RMS_CEILING,
+            room_tone_quiet_percentile: DEFAULT_ROOM_TONE_QUIET_PERCENTILE,
+            splice_search_window_ms: DEFAULT_SPLICE_SEARCH_WINDOW_MS,
+            splice_crossfade_ms: DEFAULT_SPLICE_CROSSFADE_MS,
             recent_projects: vec![],
         }
     }
@@ -249,6 +305,38 @@ mod tests {
             s.model_idle_unload_seconds,
             DEFAULT_MODEL_IDLE_UNLOAD_SECONDS
         );
+        // A prior-format settings.json without the room-tone keys loads with defaults.
+        assert!((s.room_tone_rms_ceiling - DEFAULT_ROOM_TONE_RMS_CEILING).abs() < f32::EPSILON);
+        assert!(
+            (s.room_tone_quiet_percentile - DEFAULT_ROOM_TONE_QUIET_PERCENTILE).abs()
+                < f64::EPSILON
+        );
+        // …and without the splice keys.
+        assert!((s.splice_search_window_ms - DEFAULT_SPLICE_SEARCH_WINDOW_MS).abs() < f64::EPSILON);
+        assert!((s.splice_crossfade_ms - DEFAULT_SPLICE_CROSSFADE_MS).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn room_tone_thresholds_round_trip() {
+        // 0.03125 = 1/32 is exactly representable in f32, so it survives the
+        // f32→JSON(f64) widening without rounding for the exact-equality assert.
+        let s = Settings {
+            room_tone_rms_ceiling: 0.03125,
+            room_tone_quiet_percentile: 10.0,
+            splice_search_window_ms: 25.0,
+            splice_crossfade_ms: 3.0,
+            ..Settings::default()
+        };
+        let json = s.to_json().unwrap();
+        assert_eq!(json["room_tone_rms_ceiling"], 0.03125);
+        assert_eq!(json["room_tone_quiet_percentile"], 10.0);
+        assert_eq!(json["splice_search_window_ms"], 25.0);
+        assert_eq!(json["splice_crossfade_ms"], 3.0);
+        let back = Settings::from_json(&json).unwrap();
+        assert!((back.room_tone_rms_ceiling - 0.03125).abs() < f32::EPSILON);
+        assert!((back.room_tone_quiet_percentile - 10.0).abs() < f64::EPSILON);
+        assert!((back.splice_search_window_ms - 25.0).abs() < f64::EPSILON);
+        assert!((back.splice_crossfade_ms - 3.0).abs() < f64::EPSILON);
     }
 
     #[test]

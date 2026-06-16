@@ -1,7 +1,7 @@
 # Phase 1 · M1 — Step 10: Undo / redo (`project/undo.rs`) — detailed action plan
 
 Detailed breakdown of [Step 10 in phase1-m1.md](phase1-m1.md#step-10--undo--redo-projectundors).
-Authoritative behaviour spec: [data-model.md § Undo / redo](data-model.md#undo--redo).
+Authoritative behaviour spec: [data-model.md § Undo / redo](../design/data-model.md#undo--redo).
 
 This step delivers the **in-memory undo/redo machinery**. The undoable project state — the
 per-track timeline trees **and** the non-timeline metadata — is held as one immutable value
@@ -40,8 +40,8 @@ M5 only adds the commands that produce metadata-changing edits and stamps their 
 ## Where Step 10 sits in the edit pipeline (context)
 
 A turn-mutating command flows through three layers (see
-[data-model.md § Batched edits](data-model.md#batched-multi-element-edits) and
-[§ Undo / redo](data-model.md#undo--redo)):
+[data-model.md § Batched edits](../design/data-model.md#batched-multi-element-edits) and
+[§ Undo / redo](../design/data-model.md#undo--redo)):
 
 1. **Command (M4/M5)** — computes *what* the new element(s)/metadata are (pure function of the
    originals + parameters; content is position-independent) and submits semantic ops.
@@ -238,7 +238,7 @@ impl History {
 ### `undo` algorithm
 
 Persist first, then swap memory (mirrors the write path,
-[data-model.md § Write path](data-model.md#write-path)). On any error, restore the popped entry so
+[data-model.md § Write path](../design/data-model.md#write-path)). On any error, restore the popped entry so
 the stacks and journal stay consistent:
 
 ```
@@ -483,7 +483,7 @@ covered by Step 8 — `History` is kind-agnostic.)
 
 ## Documentation touches
 
-- Behaviour is already specified in [data-model.md § Undo / redo](data-model.md#undo--redo) and the
+- Behaviour is already specified in [data-model.md § Undo / redo](../design/data-model.md#undo--redo) and the
   layering in [phase1-m1.md Step 10](phase1-m1.md#step-10--undo--redo-projectundors); no further
   design-doc change is required. Doc-comment the new module header with the producer/consumer split
   and the "undo is a forward-recorded edit" invariant.
@@ -494,7 +494,7 @@ covered by Step 8 — `History` is kind-agnostic.)
   built via `History::new(settings.undo_history_limit)`; its `undo`/`redo` handlers call
   `history.undo(&mut self.current, self.db.conn_mut(), now_posix())`. `apply_batch` is the
   `UndoEntry` producer — it enforces descending-sample application over original-tree-coordinate
-  positions ([data-model.md § Batched edits](data-model.md#batched-multi-element-edits)), builds
+  positions ([data-model.md § Batched edits](../design/data-model.md#batched-multi-element-edits)), builds
   the new `Arc<TimelineState>`, and calls `history.record`. Step 11 removes this step's
   `#[allow(dead_code)]` attributes.
 - **M5:** the editing commands (`rename_track` etc.) supply real `CommandId` categories (so

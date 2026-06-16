@@ -1,8 +1,8 @@
 # Phase 1 · M1 — Core Persistence & Timeline Engine (action plan)
 
 Step-by-step plan for the M1 milestone from [phase1.md](phase1.md). The authoritative
-spec is [data-model.md](data-model.md); the three commands are defined in
-[command-surface.md](command-surface.md).
+spec is [data-model.md](../design/data-model.md); the three commands are defined in
+[command-surface.md](../design/command-surface.md).
 
 **Definition of done:** a heavily-tested Rust engine that creates a project SQLite file,
 builds and queries the in-memory implicit timeline tree, journals deltas + snapshots,
@@ -16,18 +16,18 @@ commands. **No audio, no ML**: correctness is proven against *synthetic* turns i
   `#[tauri::command]` handlers backed by a managed `ProjectState`, with generated TS
   wrappers (no UI — consistent with how M0 wired `ping` / `app_info`). Structure
   `ProjectState` so Phase 6 can instantiate a second one per
-  [architecture.md § Rust process](architecture.md#rust-process-tauri).
+  [architecture.md § Rust process](../design/architecture.md#rust-process-tauri).
 - **Snapshot writer + explicit/exit triggers only.** Build the background snapshot-writer
   mechanism wired to `save_snapshot_now` and app-exit. **Defer the 30 s idle-autosave
   timer to M5** (no command mutates the timeline in M1, so it cannot be exercised
   end-to-end). Recorded under M5 in [phase1.md](phase1.md).
 - **New crate dependencies** (added to `core/Cargo.toml`; justified per
-  [conventions.md](conventions.md) I2): `rusqlite` with the `bundled` feature (per
-  [ops.md](ops.md#rust-crate-dependencies-key)), `blake3`, and `postcard` 1.x with its
+  [conventions.md](../design/conventions.md) I2): `rusqlite` with the `bundled` feature (per
+  [ops.md](../design/ops.md#rust-crate-dependencies-key)), `blake3`, and `postcard` 1.x with its
   `use-std` feature (`bincode 2.x` was the original spec choice but has RUSTSEC-2025-0141
   unmaintainability; postcard is the well-maintained community successor with identical
   serde + deterministic-binary semantics). Dev-only: `tempfile` for filesystem tests.
-  All three are named in [data-model.md](data-model.md) as the prescribed hash +
+  All three are named in [data-model.md](../design/data-model.md) as the prescribed hash +
   serialization approach.
 - **Working branch:** `claude/1M1` (commits unsigned per the GPG-by-branch policy in
   [CLAUDE.md](../CLAUDE.md)); squash-merged to `main` via PR. Split into numbered
@@ -80,7 +80,7 @@ commands (per [phase1.md](phase1.md) guiding principle 1).
 ## Step 2 — `db` schema + migrations
 
 - `core/migrations/0001_initial.sql`: the exact three-table DDL from
-  [data-model.md § Schema DDL](data-model.md#schema-ddl-phase-1-user_version--1) —
+  [data-model.md § Schema DDL](../design/data-model.md#schema-ddl-phase-1-user_version--1) —
   `project` (singleton, `CHECK (id = 1)`), `store`, `journal` + `journal_type_idx`;
   `PRAGMA journal_mode = WAL`, `PRAGMA foreign_keys = ON`, and
   `PRAGMA busy_timeout = 5000` applied on every open. The busy timeout makes a
@@ -102,13 +102,13 @@ See [phase1-m1-03.md](phase1-m1-03.md) for the detailed action plan.
 - Tag byte = `(kind << 4) | version`: high nibble is the kind (`Turn`=0x1, `Metadata`=0x2,
   `Snapshot`=0x3, `RoomTonePcm`=0x4, `Embedding`=0x5), low nibble is the format version
   (0–15 per kind). The hash covers the **full tagged bytes** (tag ++ postcard payload).
-  See [data-model.md § Schema version](data-model.md#schema-version) for the lazy-migration
+  See [data-model.md § Schema version](../design/data-model.md#schema-version) for the lazy-migration
   policy: old-format blobs stay readable via per-version deserializers; re-serialization
   only on genuine content edits.
 - Generic `encode_tagged` / `decode_tagged` / `decode_tagged_as` helpers; per-kind typed
   loaders/writers live with their structs in later steps and call these for the common plumbing.
 - Serialization uses `postcard::to_stdvec` / `postcard::from_bytes` — deterministic by
-  default ([data-model.md § Serialization](data-model.md#serialization)).
+  default ([data-model.md § Serialization](../design/data-model.md#serialization)).
 - **Verify:** see [phase1-m1-03.md](phase1-m1-03.md#3c--implement-coresrcprojecthashrs)
   for the full test list.
 
@@ -119,16 +119,16 @@ See [phase1-m1-04.md](phase1-m1-04.md) for the detailed action plan.
 - `project/tilable.rs`: one-method `Tilable` trait (`fn total_duration(&self) -> i64`).
 - `project/turn.rs`: `Turn { id, speaker_id, turn_duration, post_turn_silence, words,
   splices }`; `Word { word_type, text, start_sec, end_sec, is_cut, is_muted,
-  turn_offset_sample, length_samples }`; `WordType` enum (`Normal | Disfluency |
+  source_onset_sample: Option<i64>, length_samples }`; `WordType` enum (`Normal | Disfluency |
   Sound` — no `Label` / `Section` variants); `Splice { length_samples, fade_in_samples,
   fade_out_samples, kind }` with `SpliceKind { Source { source_start_sample,
   source_decode_offset }, RoomTone, Silence }` (source-only fields live in the variant,
   not as `Option<i64>` on the parent). Per
-  [data-model.md § Turn payload (speech tracks)](data-model.md#turn-payload-speech-tracks).
+  [data-model.md § Turn payload (speech tracks)](../design/data-model.md#turn-payload-speech-tracks).
 - `project/label.rs`: `Label { id, text, kind, post_label_silence }` with
   `LabelKind { Plain | Section }`. Separate blob kind `Kind::Label = 0x6` with its own
   V1 wire schema, `store_label` / `load_label`, and `LATEST_LABEL_VERSION`. Per
-  [data-model.md § Label payload (track 0)](data-model.md#label-payload-track-0).
+  [data-model.md § Label payload (track 0)](../design/data-model.md#label-payload-track-0).
 - Both types `impl Tilable`. **Ordered collections only** (no `HashMap`) — the
   determinism invariant.
 - **Verify:** see [phase1-m1-04.md](phase1-m1-04.md) for the full test list (paired
@@ -165,7 +165,7 @@ See [phase1-m1-05.md](phase1-m1-05.md) for the detailed action plan.
   `left_subtree_sum` = Σ(`element.total_duration()`) over the left subtree, plus
   `height`; both **derived, never serialized**. Edits **path-copy** to the root
   (structural sharing); no parent pointers.
-- Temporal queries per [data-model.md § Temporal query](data-model.md#temporal-query):
+- Temporal queries per [data-model.md § Temporal query](../design/data-model.md#temporal-query):
   `element_at_sample(T)` and the inverse `start_sample_of(element_hash)`. The in-element
   offset interpretation (in-speech vs. post-turn-silence for Turn; in-the-gap for Label)
   lives in element-specific helpers in `turn.rs` / `label.rs`, not in the generic tree.
@@ -184,7 +184,7 @@ See [phase1-m1-07.md](phase1-m1-07.md) for the detailed action plan.
 
 - `Delta { track_id, op, location, hash }`, `DeltaOp` (`InsertAfter` / `UpdateAfter` /
   `DeleteAfter`), `Location` (`Start` | `After(Hash)`), per
-  [data-model.md § Deltas](data-model.md#deltas). The `After(Hash)` variant points to
+  [data-model.md § Deltas](../design/data-model.md#deltas). The `After(Hash)` variant points to
   whatever element kind sits on the delta's track (Turn for `track_id > 0`, Label for
   `track_id == 0`) — the delta itself is kind-agnostic.
 - An `AdjacencyList` type (`HashMap<Location, Option<Hash>>` — every legal location is a
@@ -206,7 +206,7 @@ See [phase1-m1-08.md](phase1-m1-08.md) for the detailed action plan.
 
 - `Snapshot { tracks: Vec<(u32 /*track_id*/, Vec<Hash>)> }`; flatten a tree to its ordered
   hash sequence; build an adjacency list from a snapshot. Replay per
-  [data-model.md § Load / replay](data-model.md#load--replay): latest `type = 1` snapshot →
+  [data-model.md § Load / replay](../design/data-model.md#load--replay): latest `type = 1` snapshot →
   adjacency list → apply `type = 0` deltas with `id` greater than the snapshot's → walk from
   `Start` → fetch/deserialize each element (`load_label` for `track_id == 0`, `load_turn`
   otherwise) → O(n) bulk-build into the per-track tree (`Tree<Label>` for track 0,
@@ -260,12 +260,12 @@ See [phase1-m1-09.md](phase1-m1-09.md) for the detailed action plan.
   rows too.
 - **`project/metadata.rs`** — `Metadata { project, tracks, speakers }` (+
   `ProjectMeta`, `TrackMeta`, `SpeakerMeta`, `ModelUse`, `SourceType`) per
-  [data-model.md § Non-timeline data](data-model.md#non-timeline-data),
+  [data-model.md § Non-timeline data](../design/data-model.md#non-timeline-data),
   stored as a `type = −1` blob (most-recent wins, no replay); large binaries referenced by
   hash. `ModelUse` is a flat struct of `Option<String>` role fields (one per ML role) — not
   a `Vec`. Pinned wire-bytes + hash tests (G1 invariant) included. Source-file resolution
   (relative → absolute fallback → missing list) is **pure** (no DB I/O) per
-  [data-model.md § Audio file resolution](data-model.md#audio-file-resolution); the
+  [data-model.md § Audio file resolution](../design/data-model.md#audio-file-resolution); the
   **Missing-Files dialog is M6** — M1 only returns the list. Persisting the
   `FoundViaAbsolute` relative-path rewrite is deferred to Step 11 / M6.
 - **Verify:** full test suite per [phase1-m1-09.md § Test plan](phase1-m1-09.md#test-plan)
@@ -299,7 +299,7 @@ See [phase1-m1-10.md](phase1-m1-10.md) for the detailed action plan.
   `store_metadata` + `store::put` + `append_metadata`, stamped via the new `CommandId::undo_of`
   = `category | UNDO_FLAG`); `redo` is symmetric (swap to `after`, append the forward effect
   stamped with the plain category). An undo is thus just another forward-recorded edit; replay on
-  reopen reproduces the post-undo state. See [data-model.md § Undo / redo](data-model.md#undo--redo).
+  reopen reproduces the post-undo state. See [data-model.md § Undo / redo](../design/data-model.md#undo--redo).
 - **Bounded stack ⇒ `VecDeque`.** The undo stack is a stack at the recent end (`push_back` /
   `pop_back`) and a queue at the old end (`pop_front` to evict past the limit). The redo stack
   stays a `Vec` (cleared on every `record`, bounded by undo depth, never front-evicted).
@@ -374,7 +374,7 @@ See [phase1-m1-10.md](phase1-m1-10.md) for the detailed action plan.
   builds the new `Arc<TimelineState>`, swaps `current`, and calls `history.record` with the
   before/after snapshots + journal effects. It **applies a batch in descending sample order**
   over original-tree-coordinate positions, per
-  [data-model.md § Batched (multi-element) edits](data-model.md#batched-multi-element-edits). As of
+  [data-model.md § Batched (multi-element) edits](../design/data-model.md#batched-multi-element-edits). As of
   **Step 11d**, `apply_batch` also accepts an optional `Metadata` argument and journals the
   metadata change in the **same transaction** as the delta batch — the producer capability for
   combined tree+metadata edits (e.g. `add_track`) is in place. The track *commands*
@@ -424,7 +424,7 @@ command family on top of them; the third is the wiring itself:
 See [phase1-m1-13.md](phase1-m1-13.md) for the detailed action plan.
 
 - Commit a v1-format `.vocalboard` fixture under `core/tests/fixtures/` and a test that opens
-  it and verifies it loads (per [conventions.md](conventions.md) G1 — a persisted-format
+  it and verifies it loads (per [conventions.md](../design/conventions.md) G1 — a persisted-format
   change ships a migration **and** a fixture round-trip test). The fixture must contain a
   real `Kind::Metadata` blob (i.e. a `type = -1` journal row pointing at a stored metadata
   blob), so that opening it exercises `load_metadata` + `load_current_metadata` end-to-end
@@ -437,7 +437,7 @@ See [phase1-m1-13.md](phase1-m1-13.md) for the detailed action plan.
 ## Testing strategy (M1 is "test heavily")
 
 - Inline `#[cfg(test)]` unit tests per module hitting the boundary cases above (empty /
-  single / max / overlapping / gaps) — [conventions.md](conventions.md) A1.
+  single / max / overlapping / gaps) — [conventions.md](../design/conventions.md) A1.
 - Cross-cutting **integration tests** in `core/tests/`: the full
   new → edit (synthetic) → snapshot → reopen lifecycle, and a replay-equivalence test
   (incremental build == replay).
@@ -454,13 +454,13 @@ See [phase1-m1-13.md](phase1-m1-13.md) for the detailed action plan.
   and journal rows for the initial snapshot; `open_project` reconstructs identical state.
 - The three commands round-trip through Tauri with regenerated, in-sync TS bindings;
   `pnpm check && pnpm build` green.
-- [data-model.md](data-model.md) stays authoritative — any field/behavior adjusted during
+- [data-model.md](../design/data-model.md) stays authoritative — any field/behavior adjusted during
   implementation is updated there in the same commit.
 
 > **Deferred to later milestones:** the 30 s idle-autosave timer (M5, when edits land); the
 > Missing-Files dialog UI (M6); the **migration-consent dialog and read-only open mode**
 > (M6 — `open_project` v1 runs migrations unconditionally; M6 adds the user-consent step
-> and the engine's read-only mode per [data-model.md § Schema version](data-model.md#schema-version));
+> and the engine's read-only mode per [data-model.md § Schema version](../design/data-model.md#schema-version));
 > any turn-mutating command (M4/M5), and with it the **undo/redo command surface** (the engine's
 > `undo`/`redo` + `History::{can_undo, can_redo}` are built and tested in M1 but have no Tauri
 > command until there is an edit to undo). A concurrent-request test on the sidecar `send()` path

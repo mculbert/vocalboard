@@ -94,6 +94,66 @@ The six roles are: `transcription`, `vad`, `forced_alignment` (wav2vec2 word-tim
 
 On model download, Rust verifies the SHA-256 of the downloaded file against the manifest before moving it to the model directory.
 
+## Model resource management & scheduling
+
+> **Status: placeholder sketch — to be completed before M3 starts.**
+> This section records the decisions reached so far; the precise policy, data structures,
+> and the Rust↔Python ownership split still need to be worked out and written here.
+
+Lazy load + idle-unload alone is **not** sufficient on the consumer-grade hardware Vocalboard
+targets: the heavy models cannot all co-reside in RAM/VRAM, and running two at once (the LLM
+plus anything, in particular) will OOM or thrash. The sidecar therefore needs an explicit
+resource-management policy and a scheduler, not free concurrency. **Phase 1 ships the
+correctness floor (option A below); a smarter budget-aware algorithm is a Phase 2 revisit.**
+
+### Model units (footprint classes)
+
+The unit of residency is an **inference unit**, not a settings role — some roles load several
+models at once:
+
+- **Heavy:** **WhisperX** (a *composite* — loads the whisper model **plus** the wav2vec2
+  alignment model **plus** the pyannote diarization model concurrently for one
+  `transcribe_track`) and **Gemma** (llama.cpp / GGUF, sized 1B/4B/12B by the user's download
+  choice).
+- **Medium:** MP-SENet (enhancement).
+- **Light:** YAMnet (sound classification), VAD.
+
+Model *size* selection is fixed at download time (the RAM tiers are download-dialog guidance,
+not a runtime choice — see [§ Disfluency detection](#model-selection)), so this subsystem is
+purely about **when to load / run / evict**, never which size.
+
+### Phase 1 policy (option A — correctness floor)
+
+1. **At most one heavy unit resident at a time.** A heavy task acquires a **heavy-unit lock**;
+   heavy work serializes. (Phase 1 may treat medium/light models conservatively under the same
+   lock or a small fixed allowance rather than computing a true budget.)
+2. **Pre-emptive unload-before-swap.** Switching from one heavy unit to a different one
+   **unloads** the resident heavy unit first (the registry grows an explicit `unload_to_fit`
+   eviction path, beyond today's idle-unload). The existing idle-unload timer remains for the
+   "nothing queued" case.
+3. **Scheduling is between-task, never mid-inference.** A running inference is not preempted
+   (too expensive to discard); the scheduler only controls task **order** and model
+   **residency between tasks**.
+4. **Batch same-unit work.** The task queue is **not** FIFO — it groups tasks by inference unit
+   so that, e.g., all `transcribe_track`s of a multi-track import run back-to-back before
+   switching to the LLM, amortizing the (large) weight-load cost. (Exercised by M4's multi-track
+   import.)
+
+### Ownership (to be finalized)
+
+Tentative split: the **Rust `TaskDispatcher`** is the primary scheduler — it owns the queue and
+the `detect_gpu` / RAM picture, decides order, and never dispatches two heavy units at once. The
+**Python registry** owns the load/unload *mechanism* and enforces capacity defensively
+(`unload_to_fit`) as a safety net. The exact protocol between them is part of the work owed by
+the Step 1 action item.
+
+### Phase 2 revisit
+
+Replace the conservative one-heavy-at-a-time floor with **budget-aware packing**: derive a real
+RAM/VRAM budget from `detect_gpu` + manifest `min_ram_gb` and co-resident whatever fits (e.g.
+YAMnet alongside MP-SENet), keeping the heavy-unit rule as a special case. Informed by empirical
+"what actually fits" measurements on representative low-end hardware.
+
 ## WhisperX transcription pipeline
 
 Invoked by the `transcribe_track` task.
@@ -149,9 +209,11 @@ Invoked by the `enhance_track` task.
 4. **Pipeline delay compensation**: measure the group delay of the MP-SENet model once at startup (by processing an impulse and finding the peak of the cross-correlation); subtract this delay from the enhanced output when stitching chunks.
 5. Stitch chunks with 50ms crossfade overlaps.
 6. Resample output back to project sample rate via `torchaudio.transforms.Resample`.
-7. Write enhanced audio as FLAC to `<project>.vbdata/enhanced/<track_name>-enhanced.flac`.
+7. Write enhanced audio as FLAC to `<project>.vbdata/enhanced/<track_id>-enhanced.flac` (keyed by the stable `TrackMeta.id`, like the resampled cache).
 
-The wet/dry slider in the UI produces a linear blend of enhanced vs. original; blending happens at the audio splice read time in the Rust EDL engine (the splice reads from the enhanced FLAC at `wet_ratio` gain and from the **resampled cache** — `resampled/<track>.flac`, project rate — at `(1-wet_ratio)` gain, summed; both are at the project rate, so the two streams are sample-aligned). The ratio is persisted per track as `TrackMeta.wet_dry_ratio` and is a playback/export mixing setting — it is **not** a parameter of the `enhance_track` command (which only produces the enhanced FLAC).
+The wet/dry slider in the UI produces a linear blend of enhanced vs. original; blending happens at the audio splice read time in the Rust EDL engine (the splice reads from the enhanced FLAC at `wet_ratio` gain and from the **resampled cache** — `resampled/<track_id>.flac`, project rate — at `(1-wet_ratio)` gain, summed; both are at the project rate, so the two streams are sample-aligned). The ratio is persisted per track as `TrackMeta.wet_dry_ratio` and is a playback/export mixing setting — it is **not** a parameter of the `enhance_track` command (which only produces the enhanced FLAC).
+
+If the enhanced FLAC is **missing** at render time (deleted, or enhancement not yet run) the splice falls back to the **dry** cache alone, even when `wet_ratio > 0` — the renderer **never regenerates it inline**, because enhancement is an off-thread ML task and the real-time render path does no blocking I/O (a missing enhanced track is repaired at project open / re-enhance, like a missing [resampled cache](audio-pipeline.md#resampling)). The blend is therefore best-effort: present-and-blended, or dry.
 
 ## Disfluency detection (Gemma)
 

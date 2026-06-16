@@ -102,7 +102,7 @@ Every message (in both directions) is a single JSON object on a single line, ter
 
 ### Multiplexing
 
-Multiple requests may be in-flight simultaneously (e.g., room-tone detection on two tracks after import). Each message carries a `request_id` (UUIDv4); Python tags every response with the matching ID. Rust routes incoming stdout lines by `request_id` to the appropriate task future.
+The protocol *transport* multiplexes: multiple requests may be in-flight on the channel simultaneously (e.g. a quick `classify_sounds` while a longer task progresses). Each message carries a `request_id` (UUIDv4); Python tags every response with the matching ID, and Rust routes incoming stdout lines by `request_id` to the appropriate task future. **Transport multiplexing is not unconstrained model concurrency, however:** heavy inference units (WhisperX, the LLM) cannot co-reside on consumer hardware, so the scheduler serializes heavy work behind a lock and the registry evicts pre-emptively — see [ml-pipeline.md § Model resource management & scheduling](ml-pipeline.md#model-resource-management--scheduling).
 
 ### Back-pressure
 
@@ -134,6 +134,8 @@ App start
                                            ├─ Load latest snapshot from SQLite
                                            ├─ Apply journal deltas after snapshot
                                            ├─ Resolve audio file paths
+                                           ├─ Construct PlaybackEngine (open cpal stream at
+                                           │    the locked rate; device-open is non-fatal)
                                            └─ Render UI
 
 Running
@@ -146,6 +148,8 @@ App exit
   ├─ Write final snapshot
   └─ SQLite WAL checkpoint
 ```
+
+The `PlaybackEngine` is **managed state constructed at project open** (a playback slot alongside the project state), so its `cpal` stream is opened once at the negotiated device rate and reused across every play/stop cycle (see [audio-pipeline.md § Output stream](audio-pipeline.md#output-stream)). **Device-open failure is non-fatal:** the project still opens (with an empty playback slot), and `play_from` / `pause` / `stop` return `audio_io_error` until a device is available. A second project window owns its own engine and stream.
 
 ## Security boundaries
 

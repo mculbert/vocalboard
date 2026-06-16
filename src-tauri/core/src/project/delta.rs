@@ -2,13 +2,13 @@
 //!
 //! A delta names an edit site by the element that *precedes* it
 //! (`Location::Start` or `Location::After(Hash)`) and one of three
-//! ops (insert / update / delete). Replay (Step 8) builds an
+//! ops (insert / update / delete). Replay builds an
 //! `AdjacencyList` — a `HashMap<Location, Option<Hash>>` modelling
 //! the "next element after location" edge set (with the terminal
 //! end represented as a `Location → None` entry so every legal
 //! location is a key) — from the latest snapshot and applies each
 //! subsequent `type = 0` row's batch to it before walking the result
-//! back to an ordered hash sequence. Forward edits (Step 11) skip the
+//! back to an ordered hash sequence. Forward edits (the engine's `apply_batch`) skip the
 //! adjacency list entirely: the engine mutates the in-memory tree
 //! directly through its O(log n) primitives and emits the
 //! forward+inverse `Delta` pair at the edit site, where it already
@@ -182,7 +182,7 @@ impl AdjacencyList {
 }
 
 /// Read-side query API. Exercised by unit tests and reserved for `apply_batch`
-/// (Step 11b) and diagnostics; no non-test lib caller exists yet.
+/// and diagnostics; no non-test lib caller exists yet.
 #[allow(dead_code)]
 impl AdjacencyList {
     /// Number of elements in the track.
@@ -277,7 +277,7 @@ fn apply_one(adj: &mut AdjacencyList, d: &Delta) -> Result<(), DeltaError> {
 /// Apply each delta in `batch` to `adj`, in order.
 ///
 /// Stops on the first error, leaving `adj` in a partial state — the only
-/// caller is replay (Step 8), where any error is fatal and the abandoned list
+/// caller is replay, where any error is fatal and the abandoned list
 /// is dropped.
 pub(crate) fn apply(adj: &mut AdjacencyList, batch: &[Delta]) -> Result<(), DeltaError> {
     for d in batch {
@@ -886,7 +886,7 @@ mod tests {
     fn mixed_track_ids_coexist_in_batch() {
         // Pins the kind-agnostic contract: delta.rs never inspects track_id for routing.
         // The test wrapper splits by track_id and drives each list independently,
-        // mirroring what the Step 11 engine will do.
+        // mirroring what the engine does.
         let batch = vec![
             Delta::insert_after(0, Location::Start, h(1)),
             Delta::insert_after(1, Location::Start, h(10)),

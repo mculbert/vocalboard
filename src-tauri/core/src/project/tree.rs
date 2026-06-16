@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use super::hash::Hash;
 use super::tilable::Tilable;
+use super::turn::Turn;
 
 /// Errors returned by tree mutations.
 #[derive(Debug)]
@@ -92,6 +93,48 @@ pub struct TreeIter<'a, T: Tilable> {
     stack: Vec<(&'a Node<T>, i64)>,
 }
 
+/// In-order iterator item yielded by [`OwnedTreeIter`].
+#[derive(Clone)]
+pub struct OwnedElementRef<T> {
+    /// Project-rate sample at which this element begins.
+    pub start_sample: i64,
+    /// Content hash of the element.
+    pub hash: Hash,
+    /// Shared pointer to the element payload.
+    pub element: Arc<T>,
+}
+
+/// Stack-based in-order iterator that owns its traversal state via `Arc<Node<T>>`.
+///
+/// Unlike [`TreeIter`], this iterator holds no lifetime-bound references to the tree,
+/// making it `'static + Send` as long as `T: Send + Sync + 'static`. Produced by
+/// [`ImplicitTimelineTree::owned_iter_from`].
+pub struct OwnedTreeIter<T: Tilable> {
+    stack: Vec<(Arc<Node<T>>, i64)>,
+}
+
+impl<T: Tilable> Iterator for OwnedTreeIter<T> {
+    type Item = OwnedElementRef<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (node, base) = self.stack.pop()?;
+        let start_sample = base + node.left_subtree_sum;
+        let right_base = start_sample + node.element.total_duration();
+        // Push left spine of right subtree with owned Arc clones.
+        let mut cur = node.right.clone();
+        while let Some(r) = cur {
+            let left = r.left.clone();
+            self.stack.push((r, right_base));
+            cur = left;
+        }
+        Some(OwnedElementRef {
+            start_sample,
+            hash: node.hash,
+            element: Arc::clone(&node.element),
+        })
+    }
+}
+
 impl<'a, T: Tilable> Iterator for TreeIter<'a, T> {
     type Item = ElementRef<'a, T>;
 
@@ -110,6 +153,67 @@ impl<'a, T: Tilable> Iterator for TreeIter<'a, T> {
             hash: node.hash,
             element: &node.element,
         })
+    }
+}
+
+// --- merged turn iterator (multi-track transcript) ---
+
+/// Lazy k-way merge over several turn trees, yielding `(start_sample, end_sample, &Turn)` in
+/// global timeline order — the turn-level analog of [`crate::audio::edl::EdlCursor`].
+///
+/// Each entry is `(project_start_sample, &tree)`: a track's turns sit on the project timeline at
+/// `project_start_sample + tree-local start_sample`, so tracks that begin at different project
+/// offsets still interleave in true global order (mirroring how [`crate::audio::edl::EdlCursor`]
+/// offsets each track). Each per-tree [`TreeIter`] is already start-ordered, so a single pass
+/// picking the smallest peeked project position (ties broken by track order for determinism)
+/// emits the globally-next turn without materialising or sorting. `end_sample = start_sample +
+/// turn_duration` (the speech span, excluding trailing silence). A single tree degenerates to one
+/// peekable iterator (i.e. `tree.iter()`), so callers need no separate single-track path.
+pub struct MergedTurns<'a> {
+    /// Per-track `(project_start_sample, peekable in-order iterator)`.
+    iters: Vec<(i64, std::iter::Peekable<TreeIter<'a, Turn>>)>,
+}
+
+impl<'a> MergedTurns<'a> {
+    /// Merge the given turn trees in global timeline order.
+    ///
+    /// Each entry is `(project_start_sample, &tree)`; turns are positioned at
+    /// `project_start_sample + tree-local start_sample`.
+    pub fn new(trees: &[(i64, &'a ImplicitTimelineTree<Turn>)]) -> Self {
+        Self {
+            iters: trees
+                .iter()
+                .map(|(offset, t)| (*offset, t.iter().peekable()))
+                .collect(),
+        }
+    }
+}
+
+impl<'a> Iterator for MergedTurns<'a> {
+    type Item = (i64, i64, &'a Turn);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // Pick the iterator whose next turn starts earliest in project time (tree-local start plus
+        // the track's project offset); strict `<` keeps ties on the lower-indexed track, making
+        // the order deterministic.
+        let mut best: Option<usize> = None;
+        let mut best_start = i64::MAX;
+        for (i, (offset, it)) in self.iters.iter_mut().enumerate() {
+            if let Some(e) = it.peek() {
+                let start = *offset + e.start_sample;
+                if start < best_start {
+                    best_start = start;
+                    best = Some(i);
+                }
+            }
+        }
+        // `best` came from a successful `peek`, so `next` yields the same element; `?` keeps this
+        // panic-free without an `expect`.
+        let (offset, it) = &mut self.iters[best?];
+        let e = it.next()?;
+        let start = *offset + e.start_sample;
+        let end = start + e.element.turn_duration;
+        Some((start, end, e.element.as_ref()))
     }
 }
 
@@ -644,6 +748,73 @@ impl<T: Tilable> ImplicitTimelineTree<T> {
         }
         let new_root = delete_node(&self.root, sample)?;
         Ok(ImplicitTimelineTree { root: new_root })
+    }
+
+    /// In-order iterator positioned at the element covering `sample`.
+    ///
+    /// The first `next()` yields the element whose interval contains `sample` (or the
+    /// element starting exactly at `sample`), carrying its true accumulated start sample;
+    /// the walk then proceeds in timeline order. `sample <= 0` reproduces `iter()`;
+    /// `sample >= total_duration()` yields an empty iterator. O(log n); `next()` reused.
+    pub fn iter_from(&self, sample: i64) -> TreeIter<'_, T> {
+        if self.root.is_none() || sample >= self.total_duration() {
+            return TreeIter { stack: Vec::new() };
+        }
+        let sample = sample.max(0);
+
+        let mut stack = Vec::new();
+        let mut cur = self.root.as_deref();
+        let mut base = 0i64;
+
+        while let Some(node) = cur {
+            let node_start = base + node.left_subtree_sum;
+            if sample < node_start {
+                // target is in the left subtree; push this node (yield after left)
+                stack.push((node, base));
+                cur = node.left.as_deref();
+                // base unchanged: left subtree shares the same origin
+            } else if sample >= node_start + node.element.total_duration() {
+                // target is in the right subtree; skip this node
+                base = node_start + node.element.total_duration();
+                cur = node.right.as_deref();
+            } else {
+                // sample falls within this node; this is the target
+                stack.push((node, base));
+                break;
+            }
+        }
+
+        TreeIter { stack }
+    }
+
+    /// Like [`iter_from`](Self::iter_from) but returns an [`OwnedTreeIter`] that holds
+    /// `Arc<Node<T>>` clones rather than borrowed references, making it `'static + Send`.
+    pub fn owned_iter_from(&self, sample: i64) -> OwnedTreeIter<T> {
+        if self.root.is_none() || sample >= self.total_duration() {
+            return OwnedTreeIter { stack: Vec::new() };
+        }
+        let sample = sample.max(0);
+
+        let mut stack = Vec::new();
+        let mut cur = self.root.clone();
+        let mut base = 0i64;
+
+        while let Some(node) = cur {
+            let node_start = base + node.left_subtree_sum;
+            if sample < node_start {
+                let left = node.left.clone();
+                stack.push((node, base));
+                cur = left;
+            } else if sample >= node_start + node.element.total_duration() {
+                base = node_start + node.element.total_duration();
+                cur = node.right.clone();
+            } else {
+                stack.push((node, base));
+                break;
+            }
+        }
+
+        OwnedTreeIter { stack }
     }
 
     /// Content hash of the last element in timeline order, or `None` if empty. O(log n).
@@ -1669,6 +1840,119 @@ mod tests {
         assert_eq!(hashes(&deleted), vec![ha, hb]); // c deleted, b unchanged
     }
 
+    // --- I1 ---
+
+    #[test]
+    fn iter_from_seek_into_element_interior() {
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..5).map(|i| turn_with(i, 100, 0)).collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems.clone());
+        let exp: Vec<Hash> = elems.iter().map(|(h, _)| *h).collect();
+
+        // sample 250 is inside element 2 which occupies [200, 300)
+        let result: Vec<_> = tree.iter_from(250).collect();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].hash, exp[2]);
+        assert_eq!(result[0].start_sample, 200);
+        assert_eq!(result[1].hash, exp[3]);
+        assert_eq!(result[1].start_sample, 300);
+        assert_eq!(result[2].hash, exp[4]);
+        assert_eq!(result[2].start_sample, 400);
+    }
+
+    // --- I2 ---
+
+    #[test]
+    fn iter_from_seek_to_exact_boundary() {
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..5).map(|i| turn_with(i, 100, 0)).collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems.clone());
+        let exp: Vec<Hash> = elems.iter().map(|(h, _)| *h).collect();
+
+        // sample 300 = exact start of element 3
+        let result: Vec<_> = tree.iter_from(300).collect();
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].hash, exp[3]);
+        assert_eq!(result[0].start_sample, 300);
+        assert_eq!(result[1].hash, exp[4]);
+        assert_eq!(result[1].start_sample, 400);
+    }
+
+    // --- I3 ---
+
+    #[test]
+    fn iter_from_zero_equals_iter() {
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..20)
+            .map(|i| turn_with(i, 100 + i as i64, 10))
+            .collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems);
+
+        let iter_seq: Vec<_> = tree.iter().map(|e| (e.hash, e.start_sample)).collect();
+        let from_seq: Vec<_> = tree
+            .iter_from(0)
+            .map(|e| (e.hash, e.start_sample))
+            .collect();
+        assert_eq!(iter_seq, from_seq);
+    }
+
+    // --- I4 ---
+
+    #[test]
+    fn iter_from_edge_cases() {
+        let (ha, ea) = turn_with(1, 100, 0);
+        let (hb, eb) = turn_with(2, 100, 0);
+        let tree = ImplicitTimelineTree::from_sorted_elements(vec![(ha, ea), (hb, eb)]);
+
+        let iter_hashes: Vec<Hash> = tree.iter().map(|e| e.hash).collect();
+
+        // sample < 0 reproduces iter()
+        let neg: Vec<Hash> = tree.iter_from(-1).map(|e| e.hash).collect();
+        assert_eq!(neg, iter_hashes);
+
+        // sample == total_duration() yields empty (half-open [start, end))
+        assert!(tree.iter_from(200).next().is_none());
+
+        // sample > total_duration() yields empty
+        assert!(tree.iter_from(500).next().is_none());
+
+        // empty tree
+        let empty: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        assert!(empty.iter_from(0).next().is_none());
+        assert!(empty.iter_from(50).next().is_none());
+    }
+
+    // --- I5 ---
+
+    #[test]
+    fn iter_from_random_seeks_match_linear_scan() {
+        let mut rng = Rng::new(0x9876_5432_abcd_ef01);
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..30)
+            .map(|i| {
+                let dur = (rng.next() % 200 + 50) as i64;
+                turn_with(i, dur, 10)
+            })
+            .collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems);
+        let all: Vec<_> = tree.iter().collect();
+
+        let mut rng2 = Rng::new(0xfedc_ba98_7654_3210);
+        for _ in 0..30 {
+            let s = (rng2.next() % tree.total_duration() as u64) as i64;
+
+            let from_seq: Vec<_> = tree
+                .iter_from(s)
+                .map(|e| (e.hash, e.start_sample))
+                .collect();
+
+            // Reference: keep elements whose interval end is strictly after s
+            let linear_seq: Vec<_> = all
+                .iter()
+                .filter(|e| e.start_sample + e.element.total_duration() > s)
+                .map(|e| (e.hash, e.start_sample))
+                .collect();
+
+            assert_eq!(from_seq, linear_seq, "seek to sample {s} failed");
+        }
+    }
+
     // LH1 — last_hash is None on an empty tree.
     #[test]
     fn last_hash_none_on_empty() {
@@ -1707,5 +1991,179 @@ mod tests {
         }
         let expected = tree.iter().last().map(|e| e.hash);
         assert_eq!(tree.last_hash(), expected);
+    }
+
+    // MT1 — MergedTurns interleaves two trees in global start order.
+    //       Trees tile gaplessly from local 0, so both contribute a turn at 0 (ties break to the
+    //       lower-indexed tree); the rest interleave strictly by start_sample. end == start +
+    //       turn_duration (the speech span), and a single tree degenerates to tree.iter().
+    #[test]
+    fn mt1_merged_turns_global_order() {
+        // Tree A: id=1 [0,200) (dur 100, sil 100), id=3 [200,300) (dur 100). starts 0, 200.
+        let mut a: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        for (id, dur, sil) in [(1u64, 100i64, 100i64), (3, 100, 0)] {
+            let (h, e) = turn_with(id, dur, sil);
+            a = a.insert_at(a.total_duration(), h, e).unwrap();
+        }
+        // Tree B: id=2 [0,100), id=4 [100,300) (dur 100, sil 100), id=6 [300,400). starts 0,100,300.
+        let mut b: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        for (id, dur, sil) in [(2u64, 100i64, 0i64), (4, 100, 100), (6, 100, 0)] {
+            let (h, e) = turn_with(id, dur, sil);
+            b = b.insert_at(b.total_duration(), h, e).unwrap();
+        }
+
+        let merged: Vec<(i64, i64, u64)> = MergedTurns::new(&[(0, &a), (0, &b)])
+            .map(|(start, end, turn)| (start, end, turn.id))
+            .collect();
+
+        // Global start order, ties (start 0) on the lower-indexed tree A first.
+        assert_eq!(
+            merged,
+            vec![
+                (0, 100, 1),
+                (0, 100, 2),
+                (100, 200, 4),
+                (200, 300, 3),
+                (300, 400, 6),
+            ],
+            "MT1: interleaved by start_sample; end == start + turn_duration"
+        );
+
+        // Single-tree merge degenerates to tree.iter().
+        let single: Vec<u64> = MergedTurns::new(&[(0, &a)]).map(|(_, _, t)| t.id).collect();
+        assert_eq!(single, vec![1, 3], "MT1: single tree == in-order iter");
+    }
+
+    // MT2 — each track's project_start_sample shifts its turns onto the project timeline, so
+    //        tracks beginning at different offsets interleave in true global order. With local
+    //        starts alone (offset ignored) the order would be wrong: B's id=2 starts at local 0
+    //        but project 250, so it must fall after A's id=1 (project 0) and id=3 (project 200).
+    #[test]
+    fn mt2_merged_turns_honour_project_offsets() {
+        // Tree A @ offset 0: id=1 [0,200) (dur 100, sil 100), id=3 [200,300) (dur 100).
+        //   → project starts 0, 200.
+        let mut a: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        for (id, dur, sil) in [(1u64, 100i64, 100i64), (3, 100, 0)] {
+            let (h, e) = turn_with(id, dur, sil);
+            a = a.insert_at(a.total_duration(), h, e).unwrap();
+        }
+        // Tree B @ offset 250: id=2 [0,100), id=4 [100,200) (dur 100).
+        //   → project starts 250, 350.
+        let mut b: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        for (id, dur, sil) in [(2u64, 100i64, 0i64), (4, 100, 0)] {
+            let (h, e) = turn_with(id, dur, sil);
+            b = b.insert_at(b.total_duration(), h, e).unwrap();
+        }
+
+        let merged: Vec<(i64, i64, u64)> = MergedTurns::new(&[(0, &a), (250, &b)])
+            .map(|(start, end, turn)| (start, end, turn.id))
+            .collect();
+
+        // Ordered by project position (local start + offset), not local start alone.
+        assert_eq!(
+            merged,
+            vec![(0, 100, 1), (200, 300, 3), (250, 350, 2), (350, 450, 4),],
+            "MT2: turns ordered by project position, offsets applied to start and end"
+        );
+    }
+
+    // --- owned_iter_from (the `'static` mirror of iter_from) ------------------
+
+    // OwnedTreeIter / owned_iter_from carry their own start-sample accumulation and seek
+    // logic, distinct from the (well-tested) borrowed TreeIter. Pin the exact start samples
+    // an owned walk yields across seeks: interior, exact boundary, edges, past-end.
+    #[test]
+    fn owned_iter_from_exact_start_samples() {
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..5).map(|i| turn_with(i, 100, 0)).collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems.clone());
+        let exp: Vec<Hash> = elems.iter().map(|(h, _)| *h).collect();
+        let collect = |s: i64| -> Vec<(i64, Hash)> {
+            tree.owned_iter_from(s)
+                .map(|e| (e.start_sample, e.hash))
+                .collect()
+        };
+
+        // Full walk (seek 0 and negative both reproduce iter()).
+        let full = vec![
+            (0, exp[0]),
+            (100, exp[1]),
+            (200, exp[2]),
+            (300, exp[3]),
+            (400, exp[4]),
+        ];
+        assert_eq!(collect(0), full, "owned_iter_from(0)");
+        assert_eq!(collect(-1), full, "negative seek reproduces full walk");
+        // Interior of element 2 ([200,300)).
+        assert_eq!(
+            collect(250),
+            vec![(200, exp[2]), (300, exp[3]), (400, exp[4])],
+            "owned_iter_from(250) starts at the covering element with its true start"
+        );
+        // Exact boundary = start of element 3.
+        assert_eq!(
+            collect(300),
+            vec![(300, exp[3]), (400, exp[4])],
+            "owned_iter_from(300) starts exactly at element 3"
+        );
+        // total_duration() and past-end yield empty (half-open).
+        assert!(collect(500).is_empty(), "seek == total is empty");
+        assert!(collect(900).is_empty(), "seek past end is empty");
+    }
+
+    // owned_iter_from must agree with the borrowed iter_from element-for-element across random
+    // seeks and durations — any owned-only divergence (start accumulation, seek descent) fails.
+    #[test]
+    fn owned_iter_from_matches_iter_from_randomized() {
+        let mut rng = Rng::new(0x1234_5678_9abc_def0);
+        let elems: Vec<(Hash, Arc<Turn>)> = (0u64..30)
+            .map(|i| turn_with(i, (rng.next() % 200 + 50) as i64, 10))
+            .collect();
+        let tree = ImplicitTimelineTree::from_sorted_elements(elems);
+        let total = tree.total_duration();
+
+        let mut seeks = vec![-5, 0, 1, total - 1, total, total + 100];
+        let mut rng2 = Rng::new(0x0fed_cba9_8765_4321);
+        for _ in 0..20 {
+            seeks.push((rng2.next() % total as u64) as i64);
+        }
+        for s in seeks {
+            let borrowed: Vec<(i64, Hash)> = tree
+                .iter_from(s)
+                .map(|e| (e.start_sample, e.hash))
+                .collect();
+            let owned: Vec<(i64, Hash)> = tree
+                .owned_iter_from(s)
+                .map(|e| (e.start_sample, e.hash))
+                .collect();
+            assert_eq!(owned, borrowed, "owned_iter_from({s}) must match iter_from");
+        }
+    }
+
+    // --- error / debug formatting --------------------------------------------
+
+    #[test]
+    fn tree_error_display_messages() {
+        assert_eq!(
+            format!("{}", TreeError::SampleOutOfRange(42)),
+            "sample 42 is out of range"
+        );
+        let s = format!(
+            "{}",
+            TreeError::SampleNotOnBoundary {
+                sample: 7,
+                in_element_offset: 3,
+            }
+        );
+        assert!(
+            s.contains("sample 7 is not on an element boundary"),
+            "got: {s}"
+        );
+        assert!(s.contains("in-element offset: 3"), "got: {s}");
+    }
+
+    #[test]
+    fn tree_debug_is_opaque() {
+        let tree: ImplicitTimelineTree<Turn> = ImplicitTimelineTree::new();
+        assert_eq!(format!("{tree:?}"), "ImplicitTimelineTree(..)");
     }
 }

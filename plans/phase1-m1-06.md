@@ -2,9 +2,9 @@
 
 Per-step action plan for Step 6 of the M1 milestone from
 [phase1-m1.md](phase1-m1.md). The authoritative spec is
-[data-model.md § Implicit timeline tree](data-model.md#implicit-timeline-tree),
-[§ Temporal query](data-model.md#temporal-query), and
-[§ Tilable trait](data-model.md#tilable-trait). This step lands the
+[data-model.md § Implicit timeline tree](../design/data-model.md#implicit-timeline-tree),
+[§ Temporal query](../design/data-model.md#temporal-query), and
+[§ Tilable trait](../design/data-model.md#tilable-trait). This step lands the
 **generic, immutable, duration-weighted AVL** that Phase 1 uses to model a
 single track's timeline. Speech tracks instantiate it as
 `ImplicitTimelineTree<Turn>`; track 0 as `ImplicitTimelineTree<Label>`.
@@ -71,7 +71,7 @@ callers.
   population without re-serializing every element.
 
   The illustrative `struct Node<T>` example in
-  [data-model.md § Implicit timeline tree](data-model.md#implicit-timeline-tree)
+  [data-model.md § Implicit timeline tree](../design/data-model.md#implicit-timeline-tree)
   omits the `hash` field; **this step updates data-model.md to
   include it** (see [Documentation touches](#documentation-touches)).
 
@@ -85,7 +85,7 @@ callers.
 
 - **Augmentation is `(left_subtree_sum: i64, height: u8)`.**
   `left_subtree_sum` is Σ `total_duration()` over the left subtree
-  (used by [§ Temporal query](data-model.md#temporal-query));
+  (used by [§ Temporal query](../design/data-model.md#temporal-query));
   `height` is the AVL balance factor. Both recomputed at every node
   on the copied path; **neither is serialized** anywhere — the tree
   itself never goes to disk, and the snapshot blob (Step 8) only
@@ -283,7 +283,7 @@ callers.
 //! `ImplicitTimelineTree<Turn>` on speech tracks and `ImplicitTimelineTree<Label>`
 //! on track 0. Edits path-copy to the root via `Arc<Node<T>>`, leaving prior roots
 //! intact for snapshot and undo. See
-//! [data-model.md § Implicit timeline tree](data-model.md#implicit-timeline-tree).
+//! [data-model.md § Implicit timeline tree](../design/data-model.md#implicit-timeline-tree).
 
 use std::sync::Arc;
 
@@ -313,7 +313,7 @@ impl std::error::Error for TreeError {}
 ///
 /// Carries the element's hash, the shared `Arc` to the element payload, the
 /// in-element offset (interpretation per element kind — see
-/// [data-model.md § Temporal query](data-model.md#temporal-query)), and the
+/// [data-model.md § Temporal query](../design/data-model.md#temporal-query)), and the
 /// hash of the element immediately preceding the hit (`None` if the hit is
 /// the first element on the track — the natural `Location::Start` anchor
 /// for a delta that records an update or delete at this position).
@@ -358,7 +358,7 @@ struct Node<T: Tilable> {
 ///
 /// Clone is cheap (one `Arc` refcount bump). All mutation methods take
 /// `&self` and return a new tree; the prior root remains valid for snapshot
-/// / undo. See [data-model.md § Implicit timeline tree](data-model.md#implicit-timeline-tree).
+/// / undo. See [data-model.md § Implicit timeline tree](../design/data-model.md#implicit-timeline-tree).
 #[derive(Clone)]
 pub struct ImplicitTimelineTree<T: Tilable> {
     root: Option<Arc<Node<T>>>,
@@ -507,7 +507,7 @@ the implementer doesn't reinvent the AVL shape.
   needed — these ops act on the located element directly.
 
 - **`element_at_sample`:** iterative descent per
-  [data-model.md § Temporal query](data-model.md#temporal-query),
+  [data-model.md § Temporal query](../design/data-model.md#temporal-query),
   also tracking the predecessor as we go. The predecessor is "the
   last node from which we descended to the right" — if we ever
   descend right from a node, that node becomes the running
@@ -829,14 +829,14 @@ T41. **`eq_distinguishes_different_durations`** — two trees of one
 
 - **`data-model.md` — small updates:**
   1. Add `hash: Hash` to the illustrative `struct Node<T>` in
-     [§ Implicit timeline tree](data-model.md#implicit-timeline-tree)
+     [§ Implicit timeline tree](../design/data-model.md#implicit-timeline-tree)
      (line ~95) with a one-line comment explaining why (the
      snapshot blob and delta `Location` reference elements by hash;
      carrying it on the node lets iteration surface it without
      re-serializing).
   2. **Remove or reframe the "inverse query (absolute start sample
      of a given element)" sentence** in
-     [§ Temporal query](data-model.md#temporal-query). With the
+     [§ Temporal query](../design/data-model.md#temporal-query). With the
      tree's identity for mutation moved to sample position and the
      `iter()` method exposing running start samples directly, there
      is no longer a need to look up "the start sample of element
@@ -870,7 +870,7 @@ T41. **`eq_distinguishes_different_durations`** — two trees of one
 - **The `Location` enum (`Start` | `After(Hash)`)** and the delta
   apply / inverse machinery — Step 7. The journal layer keeps
   hash-keyed addressing (per the persistence invariants in
-  [data-model.md § Deltas](data-model.md#deltas)); tree mutation
+  [data-model.md § Deltas](../design/data-model.md#deltas)); tree mutation
   is sample-keyed because the tree is in-memory and
   position-ordered. The two layers convert at edit time, not on
   replay.

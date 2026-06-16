@@ -46,7 +46,7 @@ pub enum Kind {
     /// Full timeline snapshot (ordered turn-hash sequence per track).
     Snapshot = 0x3,
     /// Resampled room-tone PCM (f32 samples at the project sample rate).
-    RoomTonePcm = 0x4,
+    RoomTone = 0x4,
     /// Normalised mean speaker embedding vector (f32).
     Embedding = 0x5,
     /// A label track entry (id, text, kind, post-label silence).
@@ -131,7 +131,7 @@ pub fn parse_tag(b: u8) -> Result<(Kind, u8), DecodeError> {
         0x1 => Kind::Turn,
         0x2 => Kind::Metadata,
         0x3 => Kind::Snapshot,
-        0x4 => Kind::RoomTonePcm,
+        0x4 => Kind::RoomTone,
         0x5 => Kind::Embedding,
         0x6 => Kind::Label,
         other => return Err(DecodeError::UnknownKind(other)),
@@ -237,7 +237,7 @@ mod tests {
         Kind::Turn,
         Kind::Metadata,
         Kind::Snapshot,
-        Kind::RoomTonePcm,
+        Kind::RoomTone,
         Kind::Embedding,
         Kind::Label,
     ];
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(tag_byte(Kind::Turn, 1), 0x11);
         assert_eq!(tag_byte(Kind::Metadata, 1), 0x21);
         assert_eq!(tag_byte(Kind::Snapshot, 1), 0x31);
-        assert_eq!(tag_byte(Kind::RoomTonePcm, 1), 0x41);
+        assert_eq!(tag_byte(Kind::RoomTone, 1), 0x41);
         assert_eq!(tag_byte(Kind::Embedding, 1), 0x51);
         assert_eq!(tag_byte(Kind::Label, 1), 0x61);
     }
@@ -343,7 +343,7 @@ mod tests {
     }
 
     /// Unknown version: documents the UnknownVersion error shape used by per-kind
-    /// loaders (turn.rs step 4+) when their dispatch table has no arm for a version.
+    /// loaders (e.g. turn.rs) when their dispatch table has no arm for a version.
     /// parse_tag passes version 0xF through; the per-kind match arm produces the error.
     #[test]
     fn unknown_version_variant() {
