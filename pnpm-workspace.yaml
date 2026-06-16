@@ -2,3 +2,15 @@ allowBuilds:
   esbuild: true
 onlyBuiltDependencies:
   - esbuild
+# Pin patched versions of transitive dev/build deps flagged by `pnpm audit`.
+# None ship in the desktop runtime; these clear advisories at the root.
+overrides:
+  vite: '^6.4.3' # GHSA-fx2h-pf6j-xcff (fs.deny bypass), GHSA-v6wh-96g9-6wx3 (launch-editor)
+  cookie: '^0.7.0' # GHSA-pxg6-pf52-xh8x
+auditConfig:
+  ignoreGhsas:
+    # esbuild dev-server integrity check — Deno-specific, not applicable here, and
+    # esbuild is build-only (never shipped). The patched 0.28.1 breaks our build
+    # (stricter destructuring transform vs configured browser targets), so it can't
+    # be bumped yet. Revisit when vite ships a compatible patched esbuild.
+    - GHSA-gv7w-rqvm-qjhr

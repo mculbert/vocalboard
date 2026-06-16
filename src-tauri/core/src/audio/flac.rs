@@ -556,7 +556,9 @@ mod tests {
     }
 
     // SW6 — empty source: Ok(0), output is a valid 0-frame FLAC.
+    // Decoding a 0-frame FLAC falls back to ffmpeg (Symphonia rejects the empty stream).
     #[test]
+    #[ignore = "requires system ffmpeg on PATH"]
     fn sw6_stream_empty_source() {
         let dir = TempDir::new().unwrap();
         let out = dir.path().join("out.flac");
