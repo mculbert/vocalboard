@@ -2103,7 +2103,13 @@ mod integration_tests {
     // (device→project converted), monotonic, and bounded by end_sample.
     #[test]
     fn d28_playhead_reports_project_samples_under_resampling() {
-        let frames = 12_000usize;
+        // Sized well past the device-rate ring (RING_MS × 32 kHz = 6400 frames): the project
+        // must outrun the ring so back-pressure keeps producer and consumer in lockstep and
+        // interval updates keep firing late into the stream. A project that nearly fits the
+        // ring lets the producer reach end-of-stream — where it stops emitting — before the
+        // last interval, leaving the max reported position below `expected` on slower
+        // (Windows) schedulers.
+        let frames = 48_000usize;
         let (_dir, vbdata, _) = synth_project(frames);
         let tree = turn_tree(1, frames as i64);
         let start = 0i64;
