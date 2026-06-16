@@ -1978,7 +1978,13 @@ mod integration_tests {
     // the user-observable signal — while events are checked for monotonicity/range.)
     #[test]
     fn x23_determinism_matched_rate() {
-        let frames = 6000usize;
+        // Longer than the ring (RING_MS) on purpose: a project that fits entirely in the
+        // ring can be buffered by the pre-roll thread before the consumer pulls a single
+        // frame (frames_played stays 0 → no interval update ever emitted). Exceeding the
+        // ring forces producer/consumer lockstep via back-pressure, so frames_played
+        // crosses several playhead intervals while the producer is still alive — making
+        // the update emission deterministic across platforms.
+        let frames = 24000usize;
         let (_dir, vbdata, _) = synth_project(frames);
         let tree = turn_tree(1, frames as i64);
         let end = frames as i64;
@@ -1998,9 +2004,6 @@ mod integration_tests {
                 )
                 .unwrap();
             let cap = drive(&mut engine, end as usize, 333);
-            // Let the pre-roll thread observe the final frames_played and emit its
-            // interval updates before we stop (emission is scheduling-paced — see E12).
-            std::thread::sleep(Duration::from_millis(60));
             engine.stop();
             let ups = u.lock().unwrap().clone();
             (cap, ups)
